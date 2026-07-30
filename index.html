@@ -1,0 +1,4477 @@
+<!DOCTYPE html>
+<!--
+============================================================================
+  입지 분석용 커스텀 지도 제작 툴 (MapTiler SDK 기반)
+  ----------------------------------------------------------------------------
+  · 인테리어 제안서 / 입지 분석 보고서 / 상권 분석 / PPT 발표 자료에
+    바로 넣을 수 있는 "지도 이미지"를 직접 만들어 다운로드하는 웹 툴입니다.
+  · HTML + CSS + JavaScript 만으로 작성된 단일 파일입니다.
+  · 외부 프레임워크는 사용하지 않으며, 지도 라이브러리(MapTiler SDK)와
+    반경 계산용 Turf.js, 한글 폰트(Pretendard)만 CDN으로 불러옵니다.
+
+  [실행 방법]
+  1) 아래 [설정 영역]의 API_KEY 에 본인 MapTiler API Key를 넣습니다.
+  2) 이 파일(index.html)을 더블클릭하거나 브라우저로 열면 바로 실행됩니다.
+     (인터넷 연결 필요 - 지도 타일과 라이브러리를 인터넷에서 받습니다.)
+
+  ※ 초보자도 수정할 수 있도록 거의 모든 줄에 한글 주석을 달았습니다.
+============================================================================
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>입지 분석 지도 메이커 · Site Map Studio</title>
+
+<!-- ▼ MapTiler SDK (지도 라이브러리) CSS - 공식 CDN 사용 -->
+<link href="https://cdn.maptiler.com/maptiler-sdk-js/v3.9.0/maptiler-sdk.css" rel="stylesheet" />
+<!-- ▼ 한글 UI 폰트 Pretendard -->
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" rel="stylesheet" />
+
+<style>
+/* =========================================================================
+   [디자인 토큰] 색상·간격을 한 곳에서 관리합니다. 여기 값만 바꿔도 톤이 바뀝니다.
+   ========================================================================= */
+:root{
+  --ink:#1f2937;          /* 기본 글자색(짙은 회색) */
+  --ink-soft:#64748b;     /* 보조 글자색 */
+  --ink-faint:#94a3b8;    /* 흐린 글자색 */
+  --line:#e5e7eb;         /* 연회색 경계선 */
+  --line-soft:#f1f3f5;    /* 더 연한 경계선 */
+  --bg:#f6f7f9;           /* 전체 배경 */
+  --panel:#ffffff;        /* 패널 흰색 */
+  --accent:#2563eb;       /* 포인트 색(파랑) */
+  --accent-soft:#eff4ff;  /* 포인트 연한 배경 */
+  --danger:#dc2626;       /* 경고/삭제 색 */
+  --ok:#059669;           /* 정상 상태 색 */
+  --warn:#d97706;         /* 주의 색 */
+  --radius:9px;           /* 카드 모서리 둥글기 */
+  --shadow:0 1px 2px rgba(15,23,42,.04), 0 6px 18px rgba(15,23,42,.06); /* 작은 그림자 */
+}
+
+/* 기본 초기화 */
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{
+  font-family:'Pretendard','Pretendard Variable',-apple-system,sans-serif;
+  background:var(--bg); color:var(--ink);
+  font-size:13px; line-height:1.5;
+  display:flex; flex-direction:column; height:100vh; overflow:hidden;
+}
+button{font-family:inherit; cursor:pointer;}
+input,select{font-family:inherit;}
+
+/* =========================================================================
+   [상단 헤더]
+   ========================================================================= */
+.app-header{
+  height:54px; flex:0 0 54px;
+  background:var(--panel); border-bottom:1px solid var(--line);
+  display:flex; align-items:center; gap:14px; padding:0 18px; z-index:30;
+}
+.app-header .logo{
+  width:30px;height:30px;border-radius:8px;
+  background:linear-gradient(135deg,#2563eb,#1e40af);
+  display:flex;align-items:center;justify-content:center;color:#fff;
+  font-weight:800;font-size:15px;letter-spacing:-.5px;
+}
+.app-header h1{font-size:15px;font-weight:700;letter-spacing:-.3px;}
+.app-header h1 small{font-size:11px;color:var(--ink-faint);font-weight:500;margin-left:6px;}
+.app-header .spacer{flex:1;}
+/* 지도/스타일 로딩 상태 표시 배지 */
+.status-badge{
+  display:flex;align-items:center;gap:6px;
+  font-size:11.5px;font-weight:600;color:var(--ink-soft);
+  background:var(--line-soft);padding:6px 11px;border-radius:20px;
+}
+.status-badge .dot{width:7px;height:7px;border-radius:50%;background:var(--ink-faint);}
+.status-badge.is-ok .dot{background:var(--ok);}
+.status-badge.is-err .dot{background:var(--danger);}
+.status-badge.is-loading .dot{background:var(--warn);animation:blink 1s infinite;}
+@keyframes blink{50%{opacity:.25;}}
+
+.header-btn{
+  border:1px solid var(--line);background:var(--panel);
+  padding:7px 13px;border-radius:7px;font-size:12px;font-weight:600;color:var(--ink);
+}
+.header-btn:hover{background:var(--line-soft);}
+.header-btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+.header-btn.primary:hover{background:#1d4ed8;}
+/* 모바일/태블릿용 패널 토글 버튼 (PC에서는 숨김) */
+.panel-toggle{display:none;}
+
+/* =========================================================================
+   [작업 영역] 좌측 패널 + 중앙 지도 + 우측 패널
+   ========================================================================= */
+.workspace{flex:1;display:flex;min-height:0;position:relative;}
+
+.side-panel{
+  background:var(--panel);width:328px;flex:0 0 328px;
+  overflow-y:auto;display:flex;flex-direction:column;
+}
+.panel-left{border-right:1px solid var(--line);}
+.panel-right{border-left:1px solid var(--line);width:344px;flex-basis:344px;}
+
+.map-area{flex:1;position:relative;min-width:0;}
+#map{position:absolute;inset:0;}
+
+/* 패널 공통 요소 */
+.panel-section{border-bottom:1px solid var(--line);}
+.panel-section .sec-head{
+  display:flex;align-items:center;gap:8px;
+  padding:12px 16px;cursor:pointer;user-select:none;
+}
+.panel-section .sec-head h2{font-size:12.5px;font-weight:700;letter-spacing:-.2px;flex:1;}
+.panel-section .sec-head .chev{
+  font-size:11px;color:var(--ink-faint);transition:transform .18s;
+}
+.panel-section.collapsed .chev{transform:rotate(-90deg);}
+.panel-section.collapsed .sec-body{display:none;}
+.sec-body{padding:4px 16px 16px;}
+.sec-icon{font-size:13px;}
+
+.field{margin-bottom:11px;}
+.field:last-child{margin-bottom:0;}
+.field label{
+  display:block;font-size:11px;font-weight:600;color:var(--ink-soft);
+  margin-bottom:5px;letter-spacing:-.1px;
+}
+.field input[type=text],
+.field input[type=number],
+.field select,
+.field textarea{
+  width:100%;border:1px solid var(--line);border-radius:7px;
+  padding:8px 10px;font-size:12px;color:var(--ink);background:#fff;
+}
+.field input:focus,.field select:focus,.field textarea:focus{
+  outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);
+}
+.field textarea{resize:vertical;min-height:52px;}
+.field-row{display:flex;gap:8px;}
+.field-row > *{flex:1;}
+
+/* 작은 버튼들 */
+.btn{
+  border:1px solid var(--line);background:#fff;color:var(--ink);
+  padding:8px 11px;border-radius:7px;font-size:12px;font-weight:600;
+  display:inline-flex;align-items:center;justify-content:center;gap:5px;
+  width:100%;transition:background .12s;
+}
+.btn:hover{background:var(--line-soft);}
+.btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+.btn.primary:hover{background:#1d4ed8;}
+.btn.danger{color:var(--danger);border-color:#fecaca;background:#fef2f2;}
+.btn.danger:hover{background:#fee2e2;}
+.btn.sm{padding:6px 9px;font-size:11px;}
+.btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;}
+.btn-grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+
+/* 프리셋 칩(선택형 버튼) */
+.chip-group{display:flex;flex-wrap:wrap;gap:6px;}
+.chip{
+  border:1px solid var(--line);background:#fff;color:var(--ink-soft);
+  padding:6px 10px;border-radius:20px;font-size:11px;font-weight:600;
+}
+.chip:hover{border-color:var(--accent);color:var(--accent);}
+.chip.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+/* 토글 스위치 줄 */
+.toggle-row{
+  display:flex;align-items:center;gap:10px;
+  padding:7px 0;border-bottom:1px solid var(--line-soft);
+}
+.toggle-row:last-child{border-bottom:none;}
+.toggle-row .tg-label{flex:1;font-size:12px;font-weight:500;}
+.toggle-row .tg-count{font-size:10px;color:var(--ink-faint);}
+.switch{position:relative;width:36px;height:20px;flex:0 0 36px;}
+.switch input{opacity:0;width:0;height:0;}
+.switch .track{
+  position:absolute;inset:0;background:#cbd5e1;border-radius:20px;transition:.18s;
+}
+.switch .track:before{
+  content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;
+  background:#fff;border-radius:50%;transition:.18s;
+}
+.switch input:checked + .track{background:var(--accent);}
+.switch input:checked + .track:before{transform:translateX(16px);}
+
+/* 색상 선택 줄 */
+.color-row{
+  display:flex;align-items:center;gap:10px;padding:6px 0;
+}
+.color-row span{flex:1;font-size:12px;}
+.color-row input[type=color]{
+  width:34px;height:26px;border:1px solid var(--line);border-radius:6px;
+  padding:0;background:#fff;cursor:pointer;
+}
+input[type=range]{width:100%;accent-color:var(--accent);}
+
+/* 점 크기 단계 버튼 */
+.size-btn{
+  flex:1;padding:7px 0;border:1px solid var(--line);background:#fff;
+  border-radius:6px;cursor:pointer;font-size:13px;font-weight:700;
+  color:var(--ink-soft);transition:all .15s;
+}
+.size-btn:hover{border-color:var(--accent);color:var(--accent);}
+.size-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+/* 안내 박스 */
+.note{
+  font-size:11px;color:var(--ink-soft);background:var(--line-soft);
+  border-radius:7px;padding:9px 11px;line-height:1.55;
+}
+.note.warn{background:#fffbeb;color:#92400e;}
+.note.tip{background:var(--accent-soft);color:#1e40af;}
+
+/* 장소 카드 / 마커 목록 */
+.place-card{
+  border:1px solid var(--line);border-radius:var(--radius);
+  padding:12px;margin-bottom:10px;
+}
+.place-card.empty{
+  text-align:center;color:var(--ink-faint);font-size:11.5px;
+  padding:22px 12px;border-style:dashed;
+}
+.marker-list{display:flex;flex-direction:column;gap:6px;}
+.marker-item{
+  display:flex;align-items:center;gap:9px;
+  border:1px solid var(--line);border-radius:7px;padding:8px 10px;cursor:pointer;
+}
+.marker-item:hover{background:var(--line-soft);}
+.marker-item.active{border-color:var(--accent);background:var(--accent-soft);}
+.marker-item .pin-dot{width:11px;height:11px;border-radius:50%;flex:0 0 11px;}
+.marker-item .m-name{flex:1;font-size:12px;font-weight:600;}
+.marker-item .m-cat{font-size:10px;color:var(--ink-faint);}
+
+/* 분석 정보 표 */
+.info-table{width:100%;border-collapse:collapse;font-size:11.5px;}
+.info-table td{padding:5px 0;border-bottom:1px solid var(--line-soft);}
+.info-table td:first-child{color:var(--ink-soft);width:42%;}
+.info-table td:last-child{font-weight:600;text-align:right;word-break:break-all;}
+.info-table tr:last-child td{border-bottom:none;}
+
+/* =========================================================================
+   [지도 위 떠 있는 요소들]
+   ========================================================================= */
+/* 좌상단 - 클릭 모드 선택 툴바 */
+.map-tools{
+  position:absolute;top:12px;left:12px;z-index:10;
+  background:var(--panel);border:1px solid var(--line);border-radius:9px;
+  box-shadow:var(--shadow);padding:5px;display:flex;gap:4px;
+}
+.map-tools .tool{
+  border:none;background:transparent;padding:7px 11px;border-radius:6px;
+  font-size:11.5px;font-weight:600;color:var(--ink-soft);
+}
+.map-tools .tool:hover{background:var(--line-soft);}
+.map-tools .tool.active{background:var(--accent);color:#fff;}
+
+/* 지도 위 안내 토스트(상단 중앙) */
+.map-hint{
+  position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:10;
+  background:rgba(31,41,55,.92);color:#fff;font-size:11.5px;font-weight:500;
+  padding:7px 14px;border-radius:20px;pointer-events:none;
+}
+
+/* 하단 상태바 */
+.statusbar{
+  position:absolute;bottom:0;left:0;right:0;z-index:10;
+  background:rgba(255,255,255,.95);backdrop-filter:blur(4px);
+  border-top:1px solid var(--line);
+  display:flex;gap:0;overflow-x:auto;padding:0 4px;
+  font-size:10.5px;
+}
+.statusbar .st-item{
+  padding:7px 12px;white-space:nowrap;display:flex;gap:5px;align-items:center;
+  border-right:1px solid var(--line-soft);
+}
+.statusbar .st-item:last-child{border-right:none;}
+.statusbar .st-k{color:var(--ink-faint);font-weight:500;}
+.statusbar .st-v{color:var(--ink);font-weight:700;}
+
+/* 지도 위 큰 오류/안내 오버레이 (API Key 누락, 스타일 로딩 실패 등) */
+.map-overlay{
+  position:absolute;inset:0;z-index:20;
+  background:rgba(246,247,249,.97);
+  display:none;align-items:center;justify-content:center;padding:24px;
+}
+.map-overlay.show{display:flex;}
+.overlay-card{
+  background:#fff;border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow);max-width:480px;padding:26px 28px;
+}
+.overlay-card .ov-icon{font-size:30px;margin-bottom:8px;}
+.overlay-card h3{font-size:16px;margin-bottom:10px;}
+.overlay-card p{font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;line-height:1.6;}
+.overlay-card ul{font-size:12px;color:var(--ink-soft);margin:8px 0 12px 18px;line-height:1.7;}
+.overlay-card code{
+  background:var(--line-soft);padding:1px 5px;border-radius:4px;
+  font-size:11px;color:var(--accent);
+}
+
+/* =========================================================================
+   [다운로드 미리보기 모달]
+   ========================================================================= */
+.modal-back{
+  position:fixed;inset:0;z-index:100;background:rgba(15,23,42,.55);
+  display:none;align-items:center;justify-content:center;padding:24px;
+}
+.modal-back.show{display:flex;}
+/* 로드뷰는 일반 모달과 다르게 — 작게 띄우고, 메인 지도가 보이고, 크기 조절 + 드래그 가능 */
+.modal-back.rv-floating{
+  background:transparent;             /* 배경 어둡게 안 함 */
+  pointer-events:none;                /* 백드롭 클릭이 메인 지도로 통과 */
+  align-items:flex-start;
+  justify-content:flex-end;
+  padding:80px 16px 16px 0;
+}
+.modal-back.rv-floating .modal{
+  pointer-events:auto;                /* 로드뷰 창 자체는 클릭 가능 */
+  width:min(45vw, 720px);             /* 초기 크기 = 화면의 약 1/4 */
+  height:min(50vh, 560px);
+  min-width:340px;min-height:280px;
+  max-width:96vw;max-height:92vh;
+  resize:both;overflow:hidden;        /* 브라우저 네이티브 리사이즈 (우하단 핸들) */
+  position:relative;
+}
+.modal-back.rv-floating .modal-head{
+  cursor:move;                        /* 헤더는 드래그 커서 */
+  user-select:none;
+}
+.rv-resize-hint{
+  position:absolute;bottom:2px;right:2px;
+  font-size:10px;color:var(--ink-faint);pointer-events:none;
+  background:rgba(255,255,255,0.7);padding:2px 5px;border-radius:3px;
+}
+.modal{
+  background:#fff;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,.3);
+  width:min(880px,96vw);max-height:92vh;overflow:hidden;
+  display:flex;flex-direction:column;
+}
+.modal-head{
+  padding:15px 20px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:10px;
+}
+.modal-head h3{font-size:14px;flex:1;}
+.modal-head .x{
+  border:none;background:var(--line-soft);width:28px;height:28px;border-radius:7px;
+  font-size:15px;color:var(--ink-soft);
+}
+.modal-body{padding:18px 20px;overflow-y:auto;}
+.preview-box{
+  background:var(--line-soft);border:1px solid var(--line);border-radius:9px;
+  padding:12px;text-align:center;margin-bottom:14px;
+}
+.preview-box img{max-width:100%;max-height:46vh;border-radius:5px;box-shadow:var(--shadow);}
+.preview-box canvas{max-width:100%;max-height:46vh;border-radius:5px;box-shadow:var(--shadow);}
+.preview-box.eraser-mode canvas{cursor:crosshair;}
+.preview-box .ph{color:var(--ink-faint);font-size:12px;padding:50px 0;}
+.modal-foot{
+  padding:13px 20px;border-top:1px solid var(--line);
+  display:flex;gap:9px;justify-content:flex-end;
+}
+.modal-foot .btn{width:auto;padding:9px 18px;}
+
+/* =========================================================================
+   [우상단 알림 토스트]
+   ========================================================================= */
+.toast-wrap{
+  position:fixed;top:64px;right:18px;z-index:200;
+  display:flex;flex-direction:column;gap:8px;max-width:330px;
+}
+.toast{
+  background:#fff;border:1px solid var(--line);border-left:3px solid var(--ink-faint);
+  border-radius:8px;box-shadow:var(--shadow);padding:11px 14px;
+  font-size:12px;animation:slideIn .2s ease;
+}
+.toast.ok{border-left-color:var(--ok);}
+.toast.err{border-left-color:var(--danger);}
+.toast.warn{border-left-color:var(--warn);}
+.toast .t-title{font-weight:700;margin-bottom:2px;}
+.toast .t-msg{color:var(--ink-soft);line-height:1.5;}
+@keyframes slideIn{from{transform:translateX(20px);opacity:0;}}
+
+/* 로딩 오버레이(이미지 생성 중) */
+.busy-overlay{
+  position:fixed;inset:0;z-index:300;background:rgba(255,255,255,.82);
+  display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;
+}
+.busy-overlay.show{display:flex;}
+.spinner{
+  width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--accent);
+  border-radius:50%;animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+.busy-overlay .b-text{font-size:13px;font-weight:600;color:var(--ink-soft);}
+
+/* 마커 팝업(좌표 표시) 내부 글자 */
+.maplibregl-popup-content,.maptilersdk-popup-content{
+  font-family:'Pretendard',sans-serif !important;font-size:12px;
+}
+/* 중심점 표시용 십자 마커 */
+.center-marker{
+  width:26px;height:26px;pointer-events:none;
+}
+.center-marker .ring{
+  position:absolute;inset:0;border:2px solid var(--accent);border-radius:50%;
+  box-shadow:0 0 0 3px rgba(37,99,235,.15);
+}
+.center-marker .cross-h,.center-marker .cross-v{
+  position:absolute;background:var(--accent);
+}
+.center-marker .cross-h{left:50%;top:0;width:1.5px;height:100%;transform:translateX(-50%);}
+.center-marker .cross-v{top:50%;left:0;height:1.5px;width:100%;transform:translateY(-50%);}
+
+/* 주소 검색 자동완성 */
+.search-wrap{position:relative;}
+.search-wrap input{
+  padding-left:32px;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%2394a3b8' viewBox='0 0 24 24'%3E%3Cpath d='M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E") 10px center no-repeat #fff;
+}
+.search-clear{
+  position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  border:none;background:var(--line-soft);width:20px;height:20px;border-radius:50%;
+  font-size:11px;color:var(--ink-faint);cursor:pointer;display:none;
+  align-items:center;justify-content:center;
+}
+.search-clear.show{display:flex;}
+.geo-results{
+  position:absolute;top:100%;left:0;right:0;z-index:50;
+  background:#fff;border:1px solid var(--line);border-top:none;
+  border-radius:0 0 9px 9px;box-shadow:0 8px 20px rgba(15,23,42,.12);
+  max-height:320px;overflow-y:auto;display:none;
+}
+.geo-results.show{display:block;}
+.geo-item{
+  padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--line-soft);
+  display:flex;gap:10px;align-items:flex-start;
+}
+.geo-item:last-child{border-bottom:none;}
+.geo-item:hover{background:var(--accent-soft);}
+.geo-item .gi-icon{
+  flex:0 0 28px;height:28px;border-radius:7px;
+  background:var(--accent-soft);color:var(--accent);
+  display:flex;align-items:center;justify-content:center;font-size:13px;
+}
+.geo-item .gi-body{flex:1;min-width:0;}
+.geo-item .gi-name{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.geo-item .gi-addr{font-size:11px;color:var(--ink-soft);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.geo-item .gi-type{
+  font-size:9.5px;font-weight:600;color:var(--ink-faint);
+  background:var(--line-soft);padding:2px 6px;border-radius:10px;
+  flex:0 0 auto;margin-top:2px;
+}
+.geo-loading{padding:16px;text-align:center;color:var(--ink-faint);font-size:11.5px;}
+.geo-empty{padding:16px;text-align:center;color:var(--ink-faint);font-size:11.5px;}
+/* 검색 결과에서 선택된 장소 안내 칩 */
+.selected-place-chip{
+  display:flex;align-items:center;gap:7px;
+  background:var(--accent-soft);border:1px solid #bfdbfe;
+  border-radius:8px;padding:8px 11px;margin-bottom:10px;font-size:12px;
+}
+.selected-place-chip .spc-name{flex:1;font-weight:600;color:var(--accent);}
+.selected-place-chip .spc-x{
+  border:none;background:none;color:var(--ink-faint);font-size:14px;cursor:pointer;
+}
+
+/* =========================================================================
+   [반응형] 태블릿 / 모바일
+   ========================================================================= */
+@media (max-width:1180px){
+  /* 태블릿: 우측 패널을 떠 있는 서랍으로 전환, 토글 버튼 노출 */
+  .panel-toggle{display:inline-flex;}
+  .panel-right{
+    position:absolute;top:0;right:0;bottom:0;z-index:25;
+    box-shadow:-8px 0 24px rgba(15,23,42,.12);
+    transform:translateX(100%);transition:transform .22s;
+  }
+  .panel-right.open{transform:translateX(0);}
+}
+@media (max-width:760px){
+  /* 모바일: 두 패널 모두 하단 시트 형태 */
+  .panel-left,.panel-right{
+    position:absolute;left:0;right:0;bottom:0;top:auto;
+    width:100%;flex-basis:auto;height:62vh;border:none;
+    border-top-left-radius:16px;border-top-right-radius:16px;
+    box-shadow:0 -8px 28px rgba(15,23,42,.18);
+    transform:translateY(100%);transition:transform .24s;z-index:25;
+  }
+  .panel-left.open,.panel-right.open{transform:translateY(0);}
+  .app-header h1 small{display:none;}
+  .statusbar{font-size:9.5px;}
+}
+</style>
+</head>
+<body>
+
+<!-- =========================================================================
+     상단 헤더
+     ========================================================================= -->
+<header class="app-header">
+  <div class="logo">M</div>
+  <h1>입지 분석 지도 메이커<small>Site Map Studio</small></h1>
+  <div class="spacer"></div>
+  <!-- 지도 로딩 상태 배지 -->
+  <div class="status-badge is-loading" id="loadBadge">
+    <span class="dot"></span><span id="loadBadgeText">지도 로딩 중…</span>
+  </div>
+  <!-- 모바일/태블릿용 패널 토글 -->
+  <button class="header-btn panel-toggle" id="btnToggleLeft">장소</button>
+  <button class="header-btn panel-toggle" id="btnToggleRight">도구</button>
+  <!-- 메인 다운로드 버튼 -->
+  <button class="header-btn primary" id="btnHeaderDownload">⬇ 이미지 저장</button>
+</header>
+
+<!-- =========================================================================
+     작업 영역
+     ========================================================================= -->
+<div class="workspace">
+
+  <!-- ───────────── 좌측: 장소 정보 패널 ───────────── -->
+  <aside class="side-panel panel-left" id="panelLeft">
+
+    <!-- 1) 주소 검색 (MapTiler Geocoding API 연결) -->
+    <div class="panel-section">
+      <div class="sec-head"><span class="sec-icon">🔍</span><h2>장소 검색</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <div class="field search-wrap">
+          <input type="text" id="geoInput" placeholder="주소·장소명·건물명 검색" autocomplete="off" />
+          <button class="search-clear" id="geoClear">✕</button>
+          <div class="geo-results" id="geoResults"></div>
+        </div>
+        <!-- 검색으로 선택된 장소 안내 -->
+        <div id="geoSelectedChip"></div>
+
+        <!-- 마커 목록 필터 -->
+        <div class="field" style="margin-top:4px;">
+          <label>마커 목록 필터</label>
+          <input type="text" id="placeSearch" placeholder="이미 추가한 마커 중에서 검색" />
+        </div>
+        <!-- 좌표 직접 입력 (접기 가능) -->
+        <details style="margin-top:8px;">
+          <summary style="font-size:11px;font-weight:600;color:var(--ink-soft);cursor:pointer;">좌표로 직접 마커 추가 ▸</summary>
+          <div class="field" style="margin-top:8px;">
+            <div class="field-row">
+              <input type="number" id="addLng" placeholder="경도 lng" step="0.0001" />
+              <input type="number" id="addLat" placeholder="위도 lat" step="0.0001" />
+            </div>
+          </div>
+          <button class="btn sm" id="btnAddByCoord">＋ 좌표로 마커 추가</button>
+        </details>
+      </div>
+    </div>
+
+    <!-- 2) 선택한 장소 카드 -->
+    <div class="panel-section">
+      <div class="sec-head"><span class="sec-icon">📍</span><h2>선택한 장소</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <div id="placeCardArea">
+          <div class="place-card empty">지도를 클릭해 마커를 추가하거나<br>마커를 선택하면 정보가 표시됩니다.</div>
+        </div>
+        <!-- 마커 목록 -->
+        <div style="margin-top:10px;">
+          <label class="field" style="margin:0 0 6px;"><span style="font-size:11px;font-weight:600;color:var(--ink-soft);">마커 목록</span></label>
+          <div class="marker-list" id="markerList">
+            <div class="note">아직 추가된 마커가 없습니다.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3) 분석 정보 요약 -->
+    <div class="panel-section">
+      <div class="sec-head"><span class="sec-icon">📊</span><h2>분석 정보</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <table class="info-table">
+          <tr><td>반경 간격</td><td id="iv-interval">-</td></tr>
+          <tr><td>반경 개수</td><td id="iv-count">-</td></tr>
+          <tr><td>중심 좌표</td><td id="iv-center">미지정</td></tr>
+          <tr><td>현재 줌</td><td id="iv-zoom">-</td></tr>
+          <tr><td>스타일 ID</td><td id="iv-style">-</td></tr>
+          <tr><td>다운로드 범위</td><td id="iv-scope">-</td></tr>
+          <tr><td>다운로드 크기</td><td id="iv-size">-</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- 4) 주요 버튼 -->
+    <div class="panel-section">
+      <div class="sec-head"><span class="sec-icon">⚡</span><h2>빠른 작업</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <div class="btn-grid" style="margin-bottom:7px;">
+          <button class="btn sm" id="btnCenterHere">중심점=지도중심</button>
+          <button class="btn sm" id="btnMakeRadius">반경 생성</button>
+        </div>
+        <div class="btn-grid" style="margin-bottom:7px;">
+          <button class="btn sm danger" id="btnClearRadius2">반경 초기화</button>
+          <button class="btn sm" id="btnRestoreStyle2">스타일 복원</button>
+        </div>
+        <button class="btn primary" id="btnDownload2">⬇ 이미지 다운로드</button>
+        <button class="btn" id="btnAnalysis" style="margin-top:7px;background:var(--accent-soft);color:var(--accent);border-color:#bfdbfe;">📊 입지 분석 실행</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ───────────── 중앙: 지도 ───────────── -->
+  <div class="map-area">
+    <div id="map"></div>
+
+    <!-- 클릭 모드 툴바 -->
+    <div class="map-tools">
+      <button class="tool active" data-mode="move">✋ 이동</button>
+      <button class="tool" data-mode="marker">📍 마커 추가</button>
+      <button class="tool" data-mode="center">🎯 중심점 지정</button>
+      <button class="rv-btn" id="btnRoadviewCenter" style="padding:7px 12px;font-size:12px;font-weight:600;border:1px solid #fde68a;border-radius:7px;background:#fef3c7;color:#92400e;cursor:pointer;margin-left:6px;">🛣 로드뷰</button>
+      <button class="rv-btn" id="btn3dMapCenter" style="padding:7px 12px;font-size:12px;font-weight:600;border:1px solid #c7d2fe;border-radius:7px;background:#e0e7ff;color:#3730a3;cursor:pointer;margin-left:6px;">🏙 3D 지도 중심</button>
+      <button class="rv-btn" id="btn3dSelectedMarker" style="padding:7px 12px;font-size:12px;font-weight:600;border:1px solid #c7d2fe;border-radius:7px;background:#e0e7ff;color:#3730a3;cursor:pointer;margin-left:6px;">🏙 3D 선택 마커</button>
+    </div>
+
+    <!-- 지도 위 모드 안내 -->
+    <div class="map-hint" id="mapHint">지도를 드래그해 이동하세요</div>
+
+    <!-- 하단 상태바 -->
+    <div class="statusbar" id="statusbar">
+      <div class="st-item"><span class="st-k">중심</span><span class="st-v" id="sb-center">-</span></div>
+      <div class="st-item"><span class="st-k">줌</span><span class="st-v" id="sb-zoom">-</span></div>
+      <div class="st-item"><span class="st-k">선택마커</span><span class="st-v" id="sb-marker">-</span></div>
+      <div class="st-item"><span class="st-k">반경개수</span><span class="st-v" id="sb-rcount">0</span></div>
+      <div class="st-item"><span class="st-k">반경간격</span><span class="st-v" id="sb-rinterval">-</span></div>
+      <div class="st-item"><span class="st-k">정보량</span><span class="st-v" id="sb-density">Custom Original</span></div>
+      <div class="st-item"><span class="st-k">색상</span><span class="st-v" id="sb-color">Custom Original</span></div>
+      <div class="st-item"><span class="st-k">스타일ID</span><span class="st-v" id="sb-style">-</span></div>
+      <div class="st-item"><span class="st-k">저장크기</span><span class="st-v" id="sb-size">1920×1080</span></div>
+      <div class="st-item"><span class="st-k">저장범위</span><span class="st-v" id="sb-scope">지도+마커+반경</span></div>
+    </div>
+
+    <!-- 지도 위 큰 오류/안내 오버레이 -->
+    <div class="map-overlay" id="mapOverlay">
+      <div class="overlay-card" id="overlayCard"></div>
+    </div>
+  </div>
+
+  <!-- ───────────── 우측: 지도 편집 도구 패널 ───────────── -->
+  <aside class="side-panel panel-right" id="panelRight">
+
+    <!-- 1) 커스텀 스타일 상태 -->
+    <div class="panel-section">
+      <div class="sec-head"><span class="sec-icon">🎨</span><h2>커스텀 스타일</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <table class="info-table" style="margin-bottom:9px;">
+          <tr><td>스타일 ID</td><td id="rs-styleid">-</td></tr>
+          <tr><td>레이어 수</td><td id="rs-layers">-</td></tr>
+          <tr><td>로딩 상태</td><td id="rs-state">대기 중</td></tr>
+        </table>
+        <button class="btn sm" id="btnRestoreStyle">↺ 원본 커스텀 스타일로 복원</button>
+      </div>
+    </div>
+
+    <!-- 2) 정보량 프리셋 -->
+    <div class="panel-section">
+      <div class="sec-head"><span class="sec-icon">🗂️</span><h2>정보량 프리셋</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <div class="chip-group" id="densityPresets">
+          <button class="chip active" data-preset="original">Custom Original</button>
+          <button class="chip" data-preset="minimal">Minimal</button>
+          <button class="chip" data-preset="standard">Standard</button>
+          <button class="chip" data-preset="presentation">Presentation</button>
+          <button class="chip" data-preset="site">Site Analysis</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3) 레이어 ON/OFF -->
+    <div class="panel-section">
+      <div class="sec-head"><span class="sec-icon">👁️</span><h2>레이어 표시 / 숨김</h2><span class="chev">▾</span></div>
+      <div class="sec-body" id="layerToggles">
+        <div class="note">지도 로딩 후 레이어가 자동 분류됩니다.</div>
+      </div>
+    </div>
+
+    <!-- 4) 색상 커스터마이징 -->
+    <div class="panel-section">
+      <div class="sec-head"><span class="sec-icon">🖌️</span><h2>지도 색상</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <div class="chip-group" style="margin-bottom:12px;" id="colorPresets">
+          <button class="chip active" data-preset="original">Custom Original</button>
+          <button class="chip" data-preset="warm">Warm Beige</button>
+          <button class="chip" data-preset="mono">Monochrome</button>
+          <button class="chip" data-preset="satellite">🛰 Satellite</button>
+          <button class="chip" data-preset="dark">Dark Presentation</button>
+          <button class="chip" data-preset="brand">Brand Neutral</button>
+          <button class="chip" data-preset="watercolor">🎨 Watercolor</button>
+        </div>
+        <div class="color-row"><span>배경</span><input type="color" data-ckey="background" value="#f6f7f9"></div>
+        <div class="color-row"><span>도로</span><input type="color" data-ckey="road" value="#ffffff"></div>
+        <div class="color-row"><span>건물</span><input type="color" data-ckey="building" value="#e7e7e7"></div>
+        <div class="color-row"><span>녹지</span><input type="color" data-ckey="park" value="#e3e9da"></div>
+        <div class="color-row"><span>수계</span><input type="color" data-ckey="water" value="#cddce6"></div>
+        <div class="color-row"><span>라벨 텍스트</span><input type="color" data-ckey="label" value="#4b5563"></div>
+        <div class="color-row"><span>행정 경계</span><input type="color" data-ckey="boundary" value="#c4c4c4"></div>
+        <div class="note tip" style="margin-top:6px;">색상을 바꾼 뒤 원래대로 되돌리려면 위 'Custom Original' 또는 스타일 복원 버튼을 누르세요.</div>
+      </div>
+    </div>
+
+    <!-- 4-2) 오버레이 스타일 (역·버스·병원·학교) -->
+    <div class="panel-section" id="transitStyleSection">
+      <div class="sec-head"><span class="sec-icon">🚇</span><h2>오버레이 스타일</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <!-- 점 크기 (모든 오버레이 공통) -->
+        <div style="font-size:11px;font-weight:700;color:var(--ink-soft);margin:0 0 6px;">⚪ 점 크기 (모든 오버레이 공통)</div>
+        <div id="dotSizeControl" style="display:flex;gap:5px;margin-bottom:14px;">
+          <button class="size-btn active" data-size="1" title="1배 (기본)">1</button>
+          <button class="size-btn" data-size="2" title="1.5배">2</button>
+          <button class="size-btn" data-size="3" title="2.25배">3</button>
+          <button class="size-btn" data-size="4" title="3.4배">4</button>
+          <button class="size-btn" data-size="5" title="5.1배">5</button>
+        </div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--ink-soft);margin:0 0 2px;">🚇 지하철 / 기차역</div>
+        <div class="color-row"><span>점 색상</span><input type="color" id="tsStationDot" value="#1e40af"></div>
+        <div class="color-row"><span>이름 색상</span><input type="color" id="tsStationLbl" value="#1e40af"></div>
+        <div class="toggle-row">
+          <span class="tg-label">역 이름 표시</span>
+          <label class="switch"><input type="checkbox" id="tsShowLabel" checked><span class="track"></span></label>
+        </div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--ink-soft);margin:14px 0 2px;">🚌 버스정류장 <span style="color:var(--ink-faint);font-weight:500;">(클릭하면 이름 팝업)</span></div>
+        <div class="color-row"><span>점 색상</span><input type="color" id="tsBusDot" value="#059669"></div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--ink-soft);margin:14px 0 2px;">🏥 병원</div>
+        <div class="color-row"><span>점 색상</span><input type="color" id="tsHospDot" value="#dc2626"></div>
+        <div class="color-row"><span>이름 색상</span><input type="color" id="tsHospLbl" value="#b91c1c"></div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--ink-soft);margin:14px 0 2px;">🏫 학교</div>
+        <div class="color-row"><span>점 색상</span><input type="color" id="tsSchDot" value="#d97706"></div>
+        <div class="color-row"><span>이름 색상</span><input type="color" id="tsSchLbl" value="#92400e"></div>
+
+        <div style="font-size:11px;font-weight:700;color:var(--ink-soft);margin:14px 0 2px;">🏬 판매시설</div>
+        <div class="color-row"><span>점 색상</span><input type="color" id="tsShopDot" value="#7c3aed"></div>
+        <div class="color-row"><span>이름 색상</span><input type="color" id="tsShopLbl" value="#6d28d9"></div>
+      </div>
+    </div>
+
+    <!-- 5) 반경 도구 (핵심 기능) -->
+    <div class="panel-section" id="radiusSection">
+      <div class="sec-head"><span class="sec-icon">⭕</span><h2>반경 도구 (핵심)</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <!-- 중심점 -->
+        <div class="field">
+          <label>중심점 좌표</label>
+          <input type="text" id="centerText" value="미지정 — 지도/마커로 지정" readonly>
+        </div>
+        <div class="btn-grid" style="margin-bottom:11px;">
+          <button class="btn sm" id="btnCenterMarker">선택 마커로 지정</button>
+          <button class="btn sm" id="btnCenterMap">지도 중심으로 지정</button>
+        </div>
+
+        <!-- 반경 간격 / 단위 / 개수 -->
+        <div class="field">
+          <label>반경 간격 값</label>
+          <div class="field-row">
+            <input type="number" id="radiusInterval" value="500" min="1" step="any">
+            <select id="radiusUnit">
+              <option value="m" selected>m (미터)</option>
+              <option value="km">km (킬로미터)</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>반경 개수 (1~5개)</label>
+          <input type="number" id="radiusCount" value="5" min="1" max="5">
+        </div>
+        <div class="note" id="radiusPreviewNote" style="margin-bottom:11px;">예상 반경: 500m · 1km · 1.5km · 2km · 2.5km</div>
+
+        <div class="btn-grid" style="margin-bottom:7px;">
+          <button class="btn primary sm" id="btnGenRadius">⭕ 반경 생성</button>
+          <button class="btn danger sm" id="btnClearRadius">전체 삭제</button>
+        </div>
+        <button class="btn sm" id="btnDelLastRadius" style="margin-bottom:12px;">가장 바깥 반경 1개 삭제</button>
+
+        <!-- 반경 스타일 -->
+        <div class="toggle-row">
+          <span class="tg-label">반경 라벨 표시</span>
+          <label class="switch"><input type="checkbox" id="radiusLabelToggle" checked><span class="track"></span></label>
+        </div>
+        <div class="color-row"><span>내부 채움 색</span><input type="color" id="rFillColor" value="#3b82f6"></div>
+        <div class="field" style="margin-top:6px;">
+          <label>내부 투명도 <span id="rFillOpacityVal">0.08</span></label>
+          <input type="range" id="rFillOpacity" min="0" max="0.5" step="0.01" value="0.08">
+        </div>
+        <div class="color-row"><span>외곽선 색</span><input type="color" id="rLineColor" value="#2563eb"></div>
+        <div class="field" style="margin-top:6px;">
+          <label>외곽선 두께 <span id="rLineWidthVal">2</span>px</label>
+          <input type="range" id="rLineWidth" min="0.5" max="8" step="0.5" value="2">
+        </div>
+        <div class="field" style="margin-top:6px;">
+          <label>외곽선 종류</label>
+          <select id="rLineStyle">
+            <option value="solid" selected>실선 ──────</option>
+            <option value="dash">점선 ─ ─ ─ ─</option>
+            <option value="dot">점점선 · · · · ·</option>
+            <option value="dashdot">일점쇄선 ─ · ─ ·</option>
+          </select>
+        </div>
+        <div class="color-row" style="margin-top:4px;"><span>라벨 글자색</span><input type="color" id="rLabelColor" value="#1e40af"></div>
+      </div>
+    </div>
+
+    <!-- 6) 다운로드 설정 (핵심 기능) -->
+    <div class="panel-section" id="downloadSection">
+      <div class="sec-head"><span class="sec-icon">⬇️</span><h2>다운로드 설정 (핵심)</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <div class="field">
+          <label>저장 범위</label>
+          <select id="dlScope">
+            <option value="map">지도만 저장</option>
+            <option value="full" selected>지도 + 마커 + 반경 저장</option>
+            <option value="info">지도 + 마커 + 반경 + 장소 정보 카드</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>이미지에 포함할 점 정보</label>
+          <div class="toggle-row"><span class="tg-label">🚇 지하철 / 기차역</span>
+            <label class="switch"><input type="checkbox" id="dlStation" checked><span class="track"></span></label></div>
+          <div class="toggle-row"><span class="tg-label">🚌 버스정류장</span>
+            <label class="switch"><input type="checkbox" id="dlBus" checked><span class="track"></span></label></div>
+          <div class="toggle-row"><span class="tg-label">🏥 병원</span>
+            <label class="switch"><input type="checkbox" id="dlHospital"><span class="track"></span></label></div>
+          <div class="toggle-row"><span class="tg-label">🏫 학교</span>
+            <label class="switch"><input type="checkbox" id="dlSchool"><span class="track"></span></label></div>
+          <div class="toggle-row"><span class="tg-label">🏬 판매시설</span>
+            <label class="switch"><input type="checkbox" id="dlShop"><span class="track"></span></label></div>
+          <div class="note" style="margin-top:4px;">현재 지도에서 꺼져 있어도, 여기서 체크하면 다운로드 이미지에 포함됩니다.</div>
+        </div>
+        <div class="field">
+          <label>이미지 크기 (기준 크기)</label>
+          <select id="dlSize">
+            <option value="1920x1080" selected>1920 × 1080 (16:9 / PPT)</option>
+            <option value="1600x900">1600 × 900 (16:9)</option>
+            <option value="1080x1080">1080 × 1080 (정사각)</option>
+            <option value="1754x1240">A4 가로 (150dpi)</option>
+            <option value="1240x1754">A4 세로 (150dpi)</option>
+            <option value="custom">사용자 지정</option>
+          </select>
+        </div>
+        <div class="field-row" id="customSizeRow" style="display:none;">
+          <input type="number" id="dlW" placeholder="너비 px" value="1920">
+          <input type="number" id="dlH" placeholder="높이 px" value="1080">
+        </div>
+        <div class="field">
+          <label>화질 (해상도 배율) — 인쇄용은 2~3배 권장</label>
+          <select id="dlScale">
+            <option value="1">1배 (화면용 · 빠름)</option>
+            <option value="2" selected>2배 (인쇄용 · 권장)</option>
+            <option value="3">3배 (고화질 인쇄 · 느림)</option>
+            <option value="4">4배 (최고화질 · 매우 느림)</option>
+          </select>
+        </div>
+        <div class="note tip" id="dlFinalSizeNote" style="margin-bottom:11px;">
+          실제 저장 크기: 3840 × 2160 px
+        </div>
+        <div class="field">
+          <label>파일 형식</label>
+          <div class="btn-grid">
+            <button class="chip active" data-fmt="png" style="border-radius:7px;">PNG</button>
+            <button class="chip" data-fmt="jpg" style="border-radius:7px;">JPG</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>저장 방식</label>
+          <select id="dlMethod">
+            <option value="canvas" selected>브라우저 캡처 (권장 · 항상 동작)</option>
+            <option value="static">MapTiler Static API (서버 고해상도)</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <span class="tg-label">저작권 표기 포함</span>
+          <label class="switch"><input type="checkbox" id="dlCopyright" checked><span class="track"></span></label>
+        </div>
+        <div class="field" style="margin-top:8px;">
+          <label>파일명 (자동 생성)</label>
+          <input type="text" id="dlFilename" value="site-analysis-map">
+        </div>
+        <button class="btn primary" id="btnOpenDownload" style="margin-top:6px;">🖼 미리보기 후 다운로드</button>
+        <div class="note" id="dlMethodNote" style="margin-top:9px;">브라우저 캡처 방식은 별도의 고해상도 지도를 만들어 저장합니다. 화질 배율을 2~3배로 두면 인쇄 제안서에 넣어도 선명합니다.</div>
+      </div>
+    </div>
+
+  </aside>
+</div>
+
+<!-- =========================================================================
+     다운로드 미리보기 모달
+     ========================================================================= -->
+<div class="modal-back" id="modalBack">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>이미지 미리보기</h3>
+      <button class="x" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="eraserToolbar" style="display:none;margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn sm" id="btnEraserMode" style="width:auto;padding:6px 12px;">🧹 점 지우기 모드</button>
+        <button class="btn sm" id="btnUndoErase" style="width:auto;padding:6px 12px;" disabled>↩ 되돌리기</button>
+        <button class="btn sm" id="btnUndoAll" style="width:auto;padding:6px 12px;" disabled>↩↩ 전체 되돌리기</button>
+        <span id="eraserStatus" style="font-size:11px;color:var(--ink-faint);margin-left:8px;"></span>
+      </div>
+      <div class="preview-box" id="previewBox" style="position:relative;">
+        <div class="ph">미리보기를 생성하는 중…</div>
+      </div>
+      <table class="info-table" id="previewInfo"></table>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="btnRegenPreview" style="width:auto;padding:9px 16px;">↻ 다시 생성</button>
+      <button class="btn primary" id="btnConfirmDownload" style="width:auto;padding:9px 22px;">⬇ 다운로드</button>
+    </div>
+  </div>
+</div>
+
+<!-- 알림 토스트가 쌓이는 영역 -->
+<div class="toast-wrap" id="toastWrap"></div>
+
+<!-- 로드뷰 모달 (플로팅 - 작게 띄움, 크기 조절 + 드래그 가능) -->
+<div class="modal-back rv-floating" id="roadviewModalBack">
+  <div class="modal" id="rvModal" style="display:flex;flex-direction:column;">
+    <div class="modal-head" id="rvHead">
+      <h3 style="display:flex;align-items:center;gap:8px;">🛣 카카오 로드뷰<span id="rvTitle" style="font-size:12px;color:var(--ink-soft);font-weight:500;"></span></h3>
+      <button class="x" id="rvClose">✕</button>
+    </div>
+    <div style="flex:1;position:relative;overflow:hidden;background:#000;">
+      <div id="rvContainer" style="width:100%;height:100%;"></div>
+      <div id="rvMiniMap" style="position:absolute;top:10px;right:10px;width:140px;height:110px;border:2px solid #fff;border-radius:6px;box-shadow:0 3px 12px rgba(0,0,0,0.4);background:#fff;overflow:hidden;z-index:10;"></div>
+      <div id="rvNoData" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.85);color:#fff;padding:18px 22px;border-radius:8px;font-size:13px;text-align:center;z-index:5;max-width:80%;">
+        <div style="font-size:28px;margin-bottom:6px;">📍</div>
+        <div style="font-weight:600;margin-bottom:3px;">이 위치에는 로드뷰가 없습니다</div>
+        <div style="font-size:11px;color:#cbd5e1;">미니맵에서 도로 위 다른 지점을 클릭해 보세요</div>
+      </div>
+    </div>
+    <div class="rv-resize-hint">↘ 우하단 모서리 드래그하여 크기 조절</div>
+  </div>
+</div>
+
+<!-- VWorld 3D 건물 보기 모달 -->
+<div class="modal-back" id="vworld3dModalBack">
+  <div class="modal" style="max-width:92vw;width:92vw;height:90vh;display:flex;flex-direction:column;">
+    <div class="modal-head">
+      <h3 style="display:flex;align-items:center;gap:8px;">🏙 VWorld 3D 건물 보기 <span id="vw3dTitle" style="font-size:12px;color:var(--ink-soft);font-weight:500;"></span></h3>
+      <button class="x" id="vw3dClose">✕</button>
+    </div>
+    <div style="flex:1;position:relative;overflow:hidden;background:#000;">
+      <!-- 3D 지도 컨테이너 (VWorld가 기본적으로 'vmap' ID를 찾으므로 일치시킴) -->
+      <div id="vmap" style="width:100%;height:100%;background:#0a0e1a;"></div>
+
+      <!-- 로딩 표시 -->
+      <div id="vw3dLoading" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.85);color:#fff;padding:24px 32px;border-radius:10px;font-size:14px;text-align:center;z-index:5;">
+        <div style="font-size:36px;margin-bottom:8px;">🏙</div>
+        <div style="font-weight:600;margin-bottom:4px;">VWorld 3D 지도 로딩 중...</div>
+        <div style="font-size:12px;color:#cbd5e1;">건물 데이터를 불러오고 있습니다 (수 초 소요)</div>
+      </div>
+
+      <!-- 에러 표시 -->
+      <div id="vw3dError" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(220,38,38,0.95);color:#fff;padding:24px 32px;border-radius:10px;font-size:14px;text-align:center;z-index:5;max-width:80%;">
+        <div style="font-size:36px;margin-bottom:8px;">⚠️</div>
+        <div style="font-weight:700;margin-bottom:6px;">VWorld 3D 지도를 불러오지 못했습니다</div>
+        <div style="font-size:12px;line-height:1.6;">인증키, 도메인 등록(Netlify 도메인이 VWorld에 등록되어 있어야 함), 네트워크 상태를 확인해주세요.<br><br>자세한 오류는 브라우저 개발자도구 콘솔(F12)을 확인하세요.</div>
+      </div>
+    </div>
+    <div class="modal-foot" style="flex-wrap:wrap;">
+      <button class="btn" id="vw3dResetCamera" style="width:auto;padding:9px 14px;">📷 카메라 초기화</button>
+      <button class="btn" id="vw3dGoMarker" style="width:auto;padding:9px 14px;">📍 선택 마커로 이동</button>
+      <button class="btn" id="vw3dGoCenter" style="width:auto;padding:9px 14px;">🎯 지도 중심으로 이동</button>
+      <button class="btn" id="vw3dCapture" style="width:auto;padding:9px 14px;background:var(--accent-soft);color:var(--accent);border-color:#bfdbfe;">💾 3D 화면 저장</button>
+      <button class="btn" id="vw3dCloseFoot" style="width:auto;padding:9px 14px;">닫기</button>
+    </div>
+  </div>
+</div>
+<div class="modal-back" id="analysisModalBack">
+  <div class="modal" style="max-width:960px;">
+    <div class="modal-head">
+      <h3>📊 입지 분석 결과</h3>
+      <button class="x" id="analysisClose">✕</button>
+    </div>
+    <div class="modal-body" id="analysisBody" style="max-height:72vh;overflow-y:auto;">
+      <div class="note">분석을 실행하면 결과가 여기에 표시됩니다.</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" id="btnCopyAnalysis" style="width:auto;padding:9px 16px;">📋 분석 결과 복사</button>
+      <button class="btn" id="btnAiAnalysis" style="width:auto;padding:9px 16px;background:var(--accent-soft);color:var(--accent);border-color:#bfdbfe;">🤖 AI 분석 → Claude.ai에서 생성</button>
+      <button class="btn" id="btnCloseAnalysis2" style="width:auto;padding:9px 16px;">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 이미지 생성 중 로딩 오버레이 -->
+<div class="busy-overlay" id="busyOverlay">
+  <div class="spinner"></div>
+  <div class="b-text" id="busyText">이미지 생성 중…</div>
+</div>
+
+<!-- ▼ MapTiler SDK (지도 라이브러리) - 공식 CDN 사용 -->
+<script src="https://cdn.maptiler.com/maptiler-sdk-js/v3.9.0/maptiler-sdk.umd.min.js"></script>
+<!-- ▼ Turf.js (반경 원을 실제 거리 기준으로 계산) -->
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@7/turf.min.js"></script>
+
+<script>
+/* ===========================================================================
+   ★★★★★  [설정 영역] - 여기만 본인 값으로 바꾸면 됩니다  ★★★★★
+   ===========================================================================
+   1) API_KEY        : MapTiler 계정 > Account > Keys 에서 복사한 키
+   2) CUSTOM_STYLE_ID : MapTiler Editor에서 만든 커스텀 스타일의 ID
+   3) INITIAL_VIEW    : 지도가 처음 열릴 때의 위치/줌
+   --------------------------------------------------------------------------- */
+
+const API_KEY = "8esrpv7DWUrxuhOz2eHe";          // ← ★ 본인 API Key 입력
+
+const CUSTOM_STYLE_ID = "d68fd808-b95e-4c27-8e6f-7663f7ba5a1c"; // ← ★ 커스텀 스타일 ID
+
+const INITIAL_VIEW = {
+  center: [126.9816, 37.5588],  // [경도, 위도] - 서울 도심
+  zoom: 11.26,
+  pitch: 0,                     // 0 = 2D 평면 지도
+  bearing: 0                    // 0 = 정북 방향
+};
+
+/* ───── 카카오 주소 검색 (선택 사항) ─────────────────────────────────
+   한국 도로명주소·지번·건물명·상호를 네이버 지도 수준으로 검색하려면
+   카카오 JavaScript Key를 넣으세요.
+   발급 방법:
+   1. https://developers.kakao.com 로그인
+   2. '내 애플리케이션' → '애플리케이션 추가하기'
+   3. 앱 이름 아무거나 입력 → 저장
+   4. 앱 선택 → '앱 키' 메뉴 → "JavaScript 키" 복사
+   5. 아래 따옴표 안에 붙여넣기
+   ※ 키가 비어 있으면 카카오 검색 없이 MapTiler 검색만 동작합니다.
+   ──────────────────────────────────────────────────────────────────── */
+const KAKAO_JS_KEY = "f0c907b2c94c878e30e503a0dd94f491";   // ← ★ 카카오 JavaScript 키 (선택사항)
+
+/* VWorld 3D WebGL API 키 — 3D 건물 보기 기능에 사용
+   VWorld 사용자 신청 페이지: https://www.vworld.kr/dev/v4api.do */
+const VWORLD_API_KEY = "18DC9C37-E6F5-3D50-8B5B-FF46A7B03FBB";
+
+/* 커스텀 스타일 URL (위 두 값으로 자동 조립됩니다 - 수정 불필요) */
+const CUSTOM_STYLE_URL =
+  `https://api.maptiler.com/maps/${CUSTOM_STYLE_ID}/style.json?key=${API_KEY}`;
+
+/* ===========================================================================
+   [전역 상태] - 프로그램이 기억하는 값들을 한곳에 모아둡니다
+   =========================================================================== */
+const state = {
+  map: null,                 // 지도 객체
+  styleLoaded: false,        // 스타일 로딩 완료 여부
+  kakaoReady: false,         // 카카오 SDK 로딩 완료 여부
+  isSatellite: false,        // 현재 위성 지도 모드인지
+  clickMode: 'move',         // 'move' | 'marker' | 'center'
+  markers: [],               // 마커 배열 [{id,lng,lat,name,address,category,memo,color,obj}]
+  selectedMarkerId: null,    // 선택된 마커 id
+  markerSeq: 1,              // 마커 번호 매기기용
+  center: null,              // 반경 중심점 {lng,lat}
+  centerMarkerObj: null,     // 지도 위 중심점 표시 마커
+  radiusRings: [],           // 생성된 반경 원들 [{id,radiusKm,...레이어id}]
+  radiusStyle: {             // 반경 스타일 값
+    fillColor:'#3b82f6', fillOpacity:0.08,
+    lineColor:'#2563eb', lineWidth:2, lineStyle:'solid',
+    labelColor:'#1e40af', showLabel:true
+  },
+  layers: null,              // 자동 분류된 레이어 목록
+  densityPreset: 'original', // 현재 정보량 프리셋
+  colorPreset: 'original',   // 현재 색상 프리셋
+  download: {                // 다운로드 설정
+    scope:'full', size:'1920x1080', format:'png',
+    method:'canvas', copyright:true, scale:2
+  },
+  lastAnalysis: null         // 마지막 입지 분석 결과
+};
+
+/* ===========================================================================
+   [유틸] 자주 쓰는 도우미 함수들
+   =========================================================================== */
+const $ = (sel) => document.querySelector(sel);     // 요소 1개 선택
+const $$ = (sel) => document.querySelectorAll(sel); // 요소 여러개 선택
+
+/* 우상단 알림 토스트 표시 */
+function notify(title, msg, type){
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type || '');
+  el.innerHTML = `<div class="t-title">${title}</div>` + (msg ? `<div class="t-msg">${msg}</div>` : '');
+  $('#toastWrap').appendChild(el);
+  setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .3s';
+                   setTimeout(()=>el.remove(),300); }, type==='err'?6500:4000);
+}
+
+/* 거리 단위를 km로 통일 (Turf 계산은 km 기준 사용) */
+function toKm(value, unit){ return unit === 'm' ? value/1000 : value; }
+
+/* km 값을 보기 좋은 라벨로 (예: 0.5 -> "500m", 1.5 -> "1.5km") */
+function fmtRadius(km){
+  if (km < 1) return Math.round(km*1000) + 'm';
+  return (Number.isInteger(km) ? km : km.toFixed(km*10%10===0?1:2)) + 'km';
+}
+
+/* 좌표를 소수점 4자리 문자열로 */
+function fmtCoord(lng, lat){ return lat.toFixed(4) + ', ' + lng.toFixed(4); }
+
+/* 지도 로딩 상태 배지 갱신 */
+function setLoadBadge(textState, label){
+  const b = $('#loadBadge');
+  b.className = 'status-badge ' + textState;   // is-loading / is-ok / is-err
+  $('#loadBadgeText').textContent = label;
+}
+
+/* ===========================================================================
+   [0] API Key 검사 - 키가 없으면 지도를 켜지 않고 안내 화면 표시
+   =========================================================================== */
+function apiKeyMissing(){
+  return !API_KEY || API_KEY.trim() === '' || API_KEY.includes('여기에');
+}
+
+/* 지도 위에 큰 안내/오류 오버레이 표시 */
+function showOverlay(html){
+  $('#overlayCard').innerHTML = html;
+  $('#mapOverlay').classList.add('show');
+}
+function hideOverlay(){ $('#mapOverlay').classList.remove('show'); }
+
+/* ===========================================================================
+   [1] 지도 초기화 - 커스텀 스타일을 불러옵니다
+   =========================================================================== */
+function initMap(){
+
+  // (1) API Key 가 비어 있으면 지도 초기화를 중단하고 안내
+  if (apiKeyMissing()){
+    setLoadBadge('is-err', 'API Key 없음');
+    showOverlay(`
+      <div class="ov-icon">🔑</div>
+      <h3>MapTiler API Key를 먼저 입력하세요</h3>
+      <p>이 파일을 텍스트 편집기로 열어 상단 <b>[설정 영역]</b>의
+         <code>API_KEY</code> 값을 본인 키로 바꿔주세요.</p>
+      <ul>
+        <li>MapTiler 가입 → <b>Account</b> → <b>API keys</b> 메뉴에서 키 복사</li>
+        <li><code>const API_KEY = "여기에_..."</code> 부분을 복사한 키로 교체</li>
+        <li>저장 후 이 페이지를 새로고침</li>
+      </ul>
+      <p style="color:var(--ink-faint);">키는 무료 플랜으로도 발급됩니다.</p>
+    `);
+    return;
+  }
+
+  setLoadBadge('is-loading', '커스텀 스타일 로딩 중…');
+  $('#rs-state').textContent = '로딩 중…';
+
+  // (2) SDK에 API Key 등록
+  maptilersdk.config.apiKey = API_KEY;
+
+  // (3) 지도 생성 - style 에 '커스텀 스타일 URL'을 직접 지정
+  let map;
+  try {
+    map = new maptilersdk.Map({
+      container: 'map',
+      style: CUSTOM_STYLE_URL,          // ← MapTiler Editor에서 만든 커스텀 스타일
+      center: INITIAL_VIEW.center,
+      zoom: INITIAL_VIEW.zoom,
+      pitch: INITIAL_VIEW.pitch,
+      bearing: INITIAL_VIEW.bearing,
+      preserveDrawingBuffer: true,      // ← ★ 캔버스 캡처(이미지 저장)에 필수
+      attributionControl: false
+    });
+  } catch (e){
+    setLoadBadge('is-err', '지도 생성 실패');
+    showOverlay(styleErrorHtml('지도 객체를 생성하지 못했습니다. ('+e.message+')'));
+    return;
+  }
+  state.map = map;
+
+  // (4) 기본 지도 컨트롤(확대/축소, 축척) 추가
+  map.addControl(new maptilersdk.NavigationControl({ showCompass:false }), 'top-right');
+  map.addControl(new maptilersdk.ScaleControl({ unit:'metric' }), 'bottom-right');
+
+  // (5) 스타일 로딩 실패 감시용 타이머 - 12초 안에 안 뜨면 오류 안내
+  const failTimer = setTimeout(()=>{
+    if (!state.styleLoaded){
+      setLoadBadge('is-err', '스타일 로딩 실패');
+      showOverlay(styleErrorHtml('커스텀 스타일이 12초 안에 로드되지 않았습니다.'));
+    }
+  }, 12000);
+
+  // (6) 지도/스타일 오류 이벤트
+  map.on('error', (ev)=>{
+    const msg = (ev && ev.error && ev.error.message) || '알 수 없는 오류';
+    // 타일 일부 오류는 무시하고, 스타일이 아직 안 떴을 때만 크게 안내
+    if (!state.styleLoaded){
+      console.warn('Map error:', msg);
+    }
+  });
+
+  // (7) 스타일 로딩 완료 - 여기서부터 레이어 제어가 가능합니다
+  map.on('load', ()=>{
+    clearTimeout(failTimer);
+    state.styleLoaded = true;
+    hideOverlay();
+    setLoadBadge('is-ok', '지도 준비 완료');
+    $('#rs-state').textContent = '✔ 로딩 완료';
+
+    onStyleReady();          // 레이어 자동 분류 + UI 채우기
+    bindMapEvents();         // 지도 클릭/이동 이벤트 연결
+    updateStatusBar();
+    updateInfoTable();
+    notify('지도 준비 완료', '커스텀 스타일을 정상적으로 불러왔습니다.', 'ok');
+  });
+}
+
+/* 스타일 로딩 실패 시 보여줄 안내 HTML */
+function styleErrorHtml(reason){
+  return `
+    <div class="ov-icon">⚠️</div>
+    <h3>커스텀 스타일을 불러오지 못했습니다</h3>
+    <p>${reason}</p>
+    <p>다음 항목을 차례로 확인해 주세요.</p>
+    <ul>
+      <li><b>API Key</b> 가 정확한지 (오타·공백 확인)</li>
+      <li><b>커스텀 스타일이 Publish(공개)</b> 되었는지 — MapTiler Editor에서 발행 필요</li>
+      <li><b>스타일 ID</b> 가 맞는지 — 현재: <code>${CUSTOM_STYLE_ID}</code></li>
+      <li><b>도메인 제한(Allowed origins)</b> 설정에 현재 주소가 막혀있지 않은지</li>
+      <li>인터넷 연결 상태</li>
+    </ul>
+    <p style="color:var(--ink-faint);">요청대로 Positron 등 다른 스타일로 자동 대체하지 않습니다.
+       위 원인을 해결한 뒤 새로고침하세요.</p>
+  `;
+}
+
+/* ===========================================================================
+   [2] 스타일 준비 완료 후 - 레이어 자동 분류
+   ---------------------------------------------------------------------------
+   커스텀 스타일마다 레이어 ID가 다르므로 ID를 하드코딩하지 않고,
+   레이어 id / source-layer / type 키워드로 자동 분류합니다.
+   =========================================================================== */
+function classifyLayers(){
+  const style = state.map.getStyle();
+  const layers = (style && style.layers) || [];
+
+  // 분류 바구니
+  const g = {
+    background:[], roadLine:[], roadLabel:[], building:[],
+    placeLabel:[], poi:[], park:[], water:[], boundaryLine:[],
+    transit:[],       // 내부용 (호환성)
+    station:[],       // 지하철·기차역 (별도 토글)
+    bus:[],           // 버스정류장 (별도 토글)
+    hospital:[],      // 병원
+    school:[],        // 학교
+    shop:[],          // 판매시설 (백화점, 대형마트, 쇼핑몰)
+    allLabel:[], all:layers
+  };
+
+  const has = (text, words) => words.some(w => text.includes(w));
+
+  layers.forEach(L=>{
+    const id  = (L.id || '').toLowerCase();
+    const src = (L['source-layer'] || '').toLowerCase();
+    const key = id + ' ' + src;          // id와 source-layer를 합쳐 키워드 검색
+    const type = L.type;                 // background/line/fill/symbol/...
+
+    if (type === 'background'){ g.background.push(L.id); return; }
+
+    /* ─────────────────────────────────────────────────────────
+       도로(isRoad): road·street·highway·motorway 키워드
+       ※ 'transportation' 은 제거 — OpenMapTiles source-layer 이름이
+         도로·철도 모두에 쓰여서 함께 넣으면 도로가 같이 꺼집니다.
+       ───────────────────────────────────────────────────────── */
+    const isRoad     = has(key,['road','street','highway','motorway']);
+    const isWater    = has(key,['water','river','ocean','sea','lake']);
+    const isBuilding = has(key,['building']);
+    const isPark     = has(key,['park','wood','grass','forest','green','landuse','landcover']);
+    const isBoundary = has(key,['boundary','admin','border']);
+
+    /* ─────────────────────────────────────────────────────────
+       대중교통(isTransit):
+       "역·정류장" symbol 레이어만 ON/OFF 합니다.
+       철도 route line(railway line)은 도로와 같이 항상 표시되어야
+       하므로 여기서는 제외합니다.
+
+       잡히는 레이어 예시:
+       - station, subway_station, bus_stop, transit_stop
+       - aerialway, ferry_terminal
+       ───────────────────────────────────────────────────────── */
+    const isTransitSymbol = (type === 'symbol') && has(key,[
+      'station','subway','metro','tram','train',
+      'bus_stop','bus stop','transit_stop',
+      'aerialway','ferry','airport'
+    ]);
+
+    const isPlace = has(key,['place','city','town','village','suburb','locality','country','state']);
+    const isPoi   = has(key,['poi','point_of_interest']);
+
+    if (type === 'symbol'){
+      g.allLabel.push(L.id);
+      if (isRoad)           g.roadLabel.push(L.id);
+      if (isPlace)          g.placeLabel.push(L.id);
+      if (isPoi)            g.poi.push(L.id);
+      if (isTransitSymbol)  g.transit.push(L.id);  // 역·정류장 심볼만
+      return;
+    }
+    if (type === 'line'){
+      // 철도·transit line 은 도로와 함께 항상 표시 → roadLine 에 포함
+      if (isRoad) g.roadLine.push(L.id);
+      if (isBoundary) g.boundaryLine.push(L.id);
+      return;
+    }
+    if (type === 'fill' || type === 'fill-extrusion'){
+      if (isBuilding) g.building.push(L.id);
+      else if (isWater) g.water.push(L.id);
+      else if (isPark)  g.park.push(L.id);
+      else if (isPoi)   g.poi.push(L.id);
+    }
+  });
+
+  state.layers = g;
+  $('#rs-styleid').textContent = CUSTOM_STYLE_ID.slice(0,8) + '…';
+  $('#rs-layers').textContent = layers.length + '개';
+  $('#sb-style').textContent = CUSTOM_STYLE_ID.slice(0,8) + '…';
+  $('#iv-style').textContent = CUSTOM_STYLE_ID.slice(0,8) + '…';
+
+  /* 커스텀 스타일에 역·정류장·병원·학교 레이어가 없으면
+     onStyleReady에서 ensureCustomOverlays를 별도 호출합니다. */
+}
+
+/* ===========================================================================
+   커스텀 오버레이 — 지하철역 · 버스정류장 · 병원 · 학교
+   ---------------------------------------------------------------------------
+   MapTiler Editor에서 POI 레이어를 제거한 커스텀 스타일이라도,
+   OpenMapTiles 벡터 타일 원본 소스에는 데이터가 남아 있습니다.
+   여기서 필요한 항목만 골라 새 레이어로 추가합니다.
+   =========================================================================== */
+
+/* 오버레이 스타일 상태 */
+const OVERLAY_STYLE = {
+  station: { dotColor:'#1e40af', labelColor:'#1e40af' },
+  bus:     { dotColor:'#059669' },
+  hospital:{ dotColor:'#dc2626', labelColor:'#b91c1c' },
+  school:  { dotColor:'#d97706', labelColor:'#92400e' },
+  shop:    { dotColor:'#7c3aed', labelColor:'#6d28d9' },
+  showStationLabel: true,
+  dotSize: 1   // 1~5 단계 (1.5배씩 증가): 1=1× 2=1.5× 3=2.25× 4=3.4× 5=5.1×
+};
+
+/* 레이어 id 상수 */
+const OVL = {
+  staDot:'__ovl_sta_dot', staLbl:'__ovl_sta_lbl',
+  busDot:'__ovl_bus_dot',
+  hospDot:'__ovl_hosp_dot', hospLbl:'__ovl_hosp_lbl',
+  schDot:'__ovl_sch_dot', schLbl:'__ovl_sch_lbl',
+  shopDot:'__ovl_shop_dot', shopLbl:'__ovl_shop_lbl'
+};
+
+/* OpenMapTiles 벡터 소스 찾기 */
+function findOmtSource(){
+  const sources = state.map.getStyle().sources || {};
+  for (const [name, src] of Object.entries(sources)){
+    if (src && src.type === 'vector'){
+      const url = src.url || (src.tiles && src.tiles[0]) || '';
+      if (/openmaptiles|maptiler/i.test(url) || /openmaptiles/i.test(name))
+        return name;
+    }
+  }
+  for (const [name, src] of Object.entries(sources))
+    if (src && src.type === 'vector') return name;
+  return null;
+}
+
+/* 한국어 텍스트 필드 */
+const KO_TEXT = ['coalesce', ['get','name:ko'], ['get','name']];
+
+/* 전체 오버레이 한 번에 추가 */
+function ensureCustomOverlays(g){
+  const omtSource = findOmtSource();
+  if (!omtSource){
+    console.warn('[지도메이커] 벡터 소스를 찾지 못해 오버레이를 추가하지 못했습니다.');
+    return;
+  }
+  const map = state.map;
+  const font = getLabelFont();
+
+  /* ── 지하철 / 기차역 ── */
+  const staFilter = ['in',['get','subclass'],
+    ['literal',['subway','station','railway','halt','tram_stop','ferry_terminal']]];
+  if (!map.getLayer(OVL.staDot)){
+    map.addLayer({ id:OVL.staDot, type:'circle', source:omtSource, 'source-layer':'poi',
+      filter:staFilter, minzoom:11,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],11,3,16,6],
+             'circle-color':OVERLAY_STYLE.station.dotColor,
+             'circle-stroke-color':'#fff','circle-stroke-width':1.5},
+      layout:{visibility:'visible'}
+    });
+    g.station.push(OVL.staDot);
+  }
+  if (!map.getLayer(OVL.staLbl)){
+    map.addLayer({ id:OVL.staLbl, type:'symbol', source:omtSource, 'source-layer':'poi',
+      filter:staFilter, minzoom:12,
+      layout:{'text-field':KO_TEXT,'text-font':font,
+              'text-size':['interpolate',['linear'],['zoom'],12,10,16,13],
+              'text-offset':[0,1.1],'text-anchor':'top','text-optional':true,
+              visibility:OVERLAY_STYLE.showStationLabel?'visible':'none'},
+      paint:{'text-color':OVERLAY_STYLE.station.labelColor,
+             'text-halo-color':'#fff','text-halo-width':1.8}
+    });
+    g.station.push(OVL.staLbl);
+  }
+
+  /* ── 버스정류장 (점만, 이름은 클릭 팝업) ── */
+  const busFilter = ['in',['get','subclass'],['literal',['bus_stop','bus_station']]];
+  if (!map.getLayer(OVL.busDot)){
+    map.addLayer({ id:OVL.busDot, type:'circle', source:omtSource, 'source-layer':'poi',
+      filter:busFilter, minzoom:13,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],13,2.5,16,4.5],
+             'circle-color':OVERLAY_STYLE.bus.dotColor,
+             'circle-stroke-color':'#fff','circle-stroke-width':1.2},
+      layout:{visibility:'visible'}
+    });
+    g.bus.push(OVL.busDot);
+  }
+
+  /* ── 병원 ── */
+  const hospFilter = ['in',['get','subclass'],['literal',['hospital','clinic','doctors']]];
+  if (!map.getLayer(OVL.hospDot)){
+    map.addLayer({ id:OVL.hospDot, type:'circle', source:omtSource, 'source-layer':'poi',
+      filter:hospFilter, minzoom:12,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],12,2.5,16,5],
+             'circle-color':OVERLAY_STYLE.hospital.dotColor,
+             'circle-stroke-color':'#fff','circle-stroke-width':1.2},
+      layout:{visibility:'none'}
+    });
+    g.hospital.push(OVL.hospDot);
+  }
+  if (!map.getLayer(OVL.hospLbl)){
+    map.addLayer({ id:OVL.hospLbl, type:'symbol', source:omtSource, 'source-layer':'poi',
+      filter:hospFilter, minzoom:13,
+      layout:{'text-field':KO_TEXT,'text-font':font,
+              'text-size':['interpolate',['linear'],['zoom'],13,9,16,12],
+              'text-offset':[0,0.9],'text-anchor':'top',
+              'text-allow-overlap':true,'icon-allow-overlap':true,
+              visibility:'none'},
+      paint:{'text-color':OVERLAY_STYLE.hospital.labelColor,
+             'text-halo-color':'#fff','text-halo-width':1.5}
+    });
+    g.hospital.push(OVL.hospLbl);
+  }
+
+  /* ── 학교 ── */
+  const schFilter = ['in',['get','subclass'],
+    ['literal',['school','kindergarten','college','university']]];
+  if (!map.getLayer(OVL.schDot)){
+    map.addLayer({ id:OVL.schDot, type:'circle', source:omtSource, 'source-layer':'poi',
+      filter:schFilter, minzoom:12,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],12,2.5,16,5],
+             'circle-color':OVERLAY_STYLE.school.dotColor,
+             'circle-stroke-color':'#fff','circle-stroke-width':1.2},
+      layout:{visibility:'none'}
+    });
+    g.school.push(OVL.schDot);
+  }
+  if (!map.getLayer(OVL.schLbl)){
+    map.addLayer({ id:OVL.schLbl, type:'symbol', source:omtSource, 'source-layer':'poi',
+      filter:schFilter, minzoom:13,
+      layout:{'text-field':KO_TEXT,'text-font':font,
+              'text-size':['interpolate',['linear'],['zoom'],13,9,16,12],
+              'text-offset':[0,0.9],'text-anchor':'top',
+              'text-allow-overlap':true,'icon-allow-overlap':true,
+              visibility:'none'},
+      paint:{'text-color':OVERLAY_STYLE.school.labelColor,
+             'text-halo-color':'#fff','text-halo-width':1.5}
+    });
+    g.school.push(OVL.schLbl);
+  }
+
+  /* ── 판매시설 (백화점, 대형마트, 쇼핑몰) ── */
+  const shopFilter = ['in',['get','subclass'],
+    ['literal',['department_store','supermarket','mall','marketplace','furniture','convention_centre']]];
+  if (!map.getLayer(OVL.shopDot)){
+    map.addLayer({ id:OVL.shopDot, type:'circle', source:omtSource, 'source-layer':'poi',
+      filter:shopFilter, minzoom:12,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],12,2.5,16,5],
+             'circle-color':OVERLAY_STYLE.shop.dotColor,
+             'circle-stroke-color':'#fff','circle-stroke-width':1.2},
+      layout:{visibility:'none'}
+    });
+    g.shop.push(OVL.shopDot);
+  }
+  // ※ 판매시설은 버스처럼 점만 표시 - 라벨 레이어는 만들지 않습니다 (클릭하면 팝업)
+
+  /* ── 버스·판매시설 클릭 팝업 ── */
+  bindBusClickPopup();
+  bindShopClickPopup();
+  console.log('[지도메이커] 오버레이 추가 완료: 지하철역·버스정류장·병원·학교·판매시설');
+}
+
+/* 버스정류장 점 클릭 → 한국어 이름 팝업 / 다시 클릭 → 닫기
+   - 정확한 점 클릭이 어려우므로 클릭 주변 10px 박스에서 검색
+   - 매 호출마다 기존 핸들러를 제거하고 새로 부착 (스타일 재로드 후에도 안전) */
+let busPopup = null;
+let busClickHandler = null;
+function bindBusClickPopup(){
+  const map = state.map;
+  if (!map) return;
+  // 기존 핸들러가 있으면 먼저 제거
+  if (busClickHandler){
+    map.off('click', busClickHandler);
+    busClickHandler = null;
+  }
+  if (!map.getLayer(OVL.busDot)) {
+    console.warn('[지도메이커] 버스 레이어가 아직 없습니다.');
+    return;
+  }
+  // 마우스 커서 변경 (작은 점에 정확히 올라갔을 때만 변경되지만, 동작에는 영향 없음)
+  map.on('mouseenter', OVL.busDot, ()=>{ map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', OVL.busDot, ()=>{ map.getCanvas().style.cursor = ''; });
+
+  // 새 핸들러: 일반 click 이벤트에서 클릭 위치 주변 10px 박스 검사
+  busClickHandler = (e)=>{
+    // 마커/중심 모드에서는 팝업 안 띄움
+    if (state.clickMode === 'marker' || state.clickMode === 'center') return;
+    // 레이어 존재 확인
+    if (!map.getLayer(OVL.busDot)) return;
+    // 클릭 지점 주변 10px 박스에서 버스 점 검색 (작은 점도 잘 잡힘)
+    const px = e.point;
+    const box = [[px.x - 10, px.y - 10], [px.x + 10, px.y + 10]];
+    const feats = map.queryRenderedFeatures(box, { layers: [OVL.busDot] });
+    if (!feats.length) return;
+    const feat = feats[0];
+    const props = feat.properties || {};
+    const name = props['name:ko'] || props.name || '이름 없음';
+    // 토글 동작: 같은 팝업이 열려 있으면 닫고, 아니면 새로 열기
+    if (busPopup && busPopup.isOpen()){
+      busPopup.remove(); busPopup = null; return;
+    }
+    busPopup = new maptilersdk.Popup({ offset:12, closeButton:true, closeOnClick:true })
+      .setLngLat(e.lngLat)
+      .setHTML('<div style="font-family:Pretendard,sans-serif;font-size:12px;font-weight:600;color:#059669;">🚌 ' + escapeHtml(name) + '</div>')
+      .addTo(map);
+  };
+  map.on('click', busClickHandler);
+  console.log('[지도메이커] 버스 클릭 팝업 연결 완료');
+}
+
+/* 판매시설 점 클릭 → 한국어 이름 팝업 / 다시 클릭 → 닫기 */
+let shopPopup = null;
+let shopClickHandler = null;
+function bindShopClickPopup(){
+  const map = state.map;
+  if (!map) return;
+  if (shopClickHandler){
+    map.off('click', shopClickHandler);
+    shopClickHandler = null;
+  }
+  if (!map.getLayer(OVL.shopDot)) {
+    console.warn('[지도메이커] 판매시설 레이어가 아직 없습니다.');
+    return;
+  }
+  map.on('mouseenter', OVL.shopDot, ()=>{ map.getCanvas().style.cursor = 'pointer'; });
+  map.on('mouseleave', OVL.shopDot, ()=>{ map.getCanvas().style.cursor = ''; });
+
+  shopClickHandler = (e)=>{
+    if (state.clickMode === 'marker' || state.clickMode === 'center') return;
+    if (!map.getLayer(OVL.shopDot)) return;
+    const px = e.point;
+    const box = [[px.x - 10, px.y - 10], [px.x + 10, px.y + 10]];
+    const feats = map.queryRenderedFeatures(box, { layers: [OVL.shopDot] });
+    if (!feats.length) return;
+    const feat = feats[0];
+    const props = feat.properties || {};
+    const name = props['name:ko'] || props.name || '이름 없음';
+    if (shopPopup && shopPopup.isOpen()){
+      shopPopup.remove(); shopPopup = null; return;
+    }
+    shopPopup = new maptilersdk.Popup({ offset:12, closeButton:true, closeOnClick:true })
+      .setLngLat(e.lngLat)
+      .setHTML('<div style="font-family:Pretendard,sans-serif;font-size:12px;font-weight:600;color:#7c3aed;">🏬 ' + escapeHtml(name) + '</div>')
+      .addTo(map);
+  };
+  map.on('click', shopClickHandler);
+  console.log('[지도메이커] 판매시설 클릭 팝업 연결 완료');
+}
+
+/* 오버레이 스타일 즉시 적용 */
+function applyOverlayStyle(){
+  const map = state.map; if (!map) return;
+  const trySet = (id,p,v)=>{ try{map.setPaintProperty(id,p,v);}catch(e){} };
+  const tryLay = (id,p,v)=>{ try{map.setLayoutProperty(id,p,v);}catch(e){} };
+  trySet(OVL.staDot,'circle-color',OVERLAY_STYLE.station.dotColor);
+  trySet(OVL.staLbl,'text-color',OVERLAY_STYLE.station.labelColor);
+  trySet(OVL.busDot,'circle-color',OVERLAY_STYLE.bus.dotColor);
+  trySet(OVL.hospDot,'circle-color',OVERLAY_STYLE.hospital.dotColor);
+  trySet(OVL.hospLbl,'text-color',OVERLAY_STYLE.hospital.labelColor);
+  trySet(OVL.schDot,'circle-color',OVERLAY_STYLE.school.dotColor);
+  trySet(OVL.schLbl,'text-color',OVERLAY_STYLE.school.labelColor);
+  trySet(OVL.shopDot,'circle-color',OVERLAY_STYLE.shop.dotColor);
+  trySet(OVL.shopLbl,'text-color',OVERLAY_STYLE.shop.labelColor);
+  tryLay(OVL.staLbl,'visibility',OVERLAY_STYLE.showStationLabel?'visible':'none');
+  applyDotSize();   // 점 크기도 함께 다시 적용
+}
+
+/* 점 크기 단계(1~5) → 배율 계산. 1단계는 1배, 매 단계 1.5배씩 증가 */
+function dotSizeMultiplier(level){
+  return Math.pow(1.5, (level || 1) - 1);
+}
+
+/* 모든 오버레이 점 레이어에 현재 크기 배율 적용 */
+function applyDotSize(){
+  const map = state.map; if (!map) return;
+  const k = dotSizeMultiplier(OVERLAY_STYLE.dotSize);
+  // 각 레이어의 원본 [zoom→radius] 베이스 값 (k=1일 때 원래 크기)
+  const base = {
+    [OVL.staDot]:  [11, 3,   16, 6],
+    [OVL.busDot]:  [13, 2.5, 16, 4.5],
+    [OVL.hospDot]: [12, 2.5, 16, 5],
+    [OVL.schDot]:  [12, 2.5, 16, 5],
+    [OVL.shopDot]: [12, 2.5, 16, 5]
+  };
+  Object.entries(base).forEach(([id, [z1,r1,z2,r2]])=>{
+    try {
+      map.setPaintProperty(id, 'circle-radius',
+        ['interpolate',['linear'],['zoom'], z1, r1*k, z2, r2*k]);
+    } catch(e){}
+  });
+
+  // 라벨 위치(text-offset)도 점 크기에 맞춰 조정 — 점 안으로 안 겹치도록
+  // 기본 offset에 k를 곱하면, 점이 커진 만큼 라벨도 같은 비율로 멀리 배치됨
+  const labelOffsetBase = {
+    [OVL.staLbl]:  1.1,
+    [OVL.hospLbl]: 0.9,
+    [OVL.schLbl]:  0.9
+  };
+  Object.entries(labelOffsetBase).forEach(([id, baseOffset])=>{
+    try {
+      map.setLayoutProperty(id, 'text-offset', [0, baseOffset * k]);
+    } catch(e){}
+  });
+}
+
+/* 스타일 준비 후 한 번에 처리
+   ※ 첫 로딩에서는 커스텀 스타일의 원본 색상을 그대로 두기 위해
+     색상 선택기 값을 강제로 덮어쓰지 않습니다. */
+function onStyleReady(){
+  classifyLayers();
+  // ensureCustomOverlays가 실패해도 토글은 반드시 만들어야 함
+  try { ensureCustomOverlays(state.layers); } catch(e){ console.error('[지도메이커] 오버레이 추가 오류:', e); }
+  buildLayerToggles();
+}
+
+/* 스타일에서 실제 사용 중인 라벨 폰트를 찾아옵니다.
+   (커스텀 스타일마다 폰트가 다를 수 있어 반경 라벨에 그대로 재사용) */
+function getLabelFont(){
+  try{
+    const layers = state.map.getStyle().layers || [];
+    for (const L of layers){
+      const f = L.layout && L.layout['text-font'];
+      if (Array.isArray(f) && typeof f[0] === 'string') return f;
+    }
+  }catch(e){}
+  return ['Open Sans Bold'];   // 못 찾으면 기본값
+}
+
+/* 외곽선 '선 종류' 값을 line-dasharray 패턴으로 변환합니다.
+   - 'solid'  : 실선  → null 반환 (dasharray 속성을 넣지 않음)
+   - 'dash'   : 점선   ─ ─ ─
+   - 'dot'    : 점점선  · · · ·
+   - 'dashdot': 일점쇄선 ─ · ─ ·
+   숫자는 '선 두께의 배수'라서 두께를 바꿔도 비율이 유지됩니다. */
+function dashArrayOf(lineStyle){
+  if (lineStyle === 'dash')    return [3, 2];        // 칠 3, 빈칸 2
+  if (lineStyle === 'dot')     return [0.6, 1.6];    // 짧은 칠 = 점
+  if (lineStyle === 'dashdot') return [3, 1.6, 0.6, 1.6]; // 대시-점 반복
+  return null;                                       // solid
+}
+
+/* ===========================================================================
+   [3] 레이어 ON/OFF UI 만들기
+   =========================================================================== */
+const LAYER_GROUPS = [
+  { key:'roadLabel',   label:'도로명 / 도로 라벨' },
+  { key:'building',    label:'건물 정보' },
+  { key:'placeLabel',  label:'지명 라벨' },
+  { key:'park',        label:'공원 / 녹지' },
+  { key:'water',       label:'수계 / 하천' },
+  { key:'boundaryLine',label:'행정 경계' },
+  { key:'station',     label:'🚇 지하철 / 기차역' },
+  { key:'bus',         label:'🚌 버스정류장' },
+  { key:'hospital',    label:'🏥 병원' },
+  { key:'school',      label:'🏫 학교' },
+  { key:'shop',        label:'🏬 판매시설' }
+];
+
+function buildLayerToggles(){
+  const box = $('#layerToggles');
+  box.innerHTML = '';
+  // 기본 OFF인 그룹 (처음 로드 시 unchecked)
+  const defaultOff = ['hospital','school','shop'];
+  LAYER_GROUPS.forEach(grp=>{
+    const ids = state.layers[grp.key] || [];
+    const isOff = defaultOff.includes(grp.key);
+    const hasLayers = ids.length > 0;
+    // 체크 상태: 레이어가 있고, 기본 OFF가 아닌 경우에만 checked
+    const isChecked = hasLayers && !isOff;
+    const row = document.createElement('div');
+    row.className = 'toggle-row';
+    row.innerHTML = `
+      <span class="tg-label">${grp.label}</span>
+      <span class="tg-count">${ids.length}개</span>
+      <label class="switch">
+        <input type="checkbox" data-group="${grp.key}" ${isChecked?'checked':''} ${hasLayers?'':'disabled'}>
+        <span class="track"></span>
+      </label>`;
+    box.appendChild(row);
+  });
+  // 체크박스 이벤트 연결
+  box.querySelectorAll('input[data-group]').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      setGroupVisible(cb.dataset.group, cb.checked);
+    });
+  });
+}
+
+/* 레이어 그룹을 보이기/숨기기 */
+function setGroupVisible(groupKey, visible){
+  if (!state.styleLoaded) return;
+  const ids = (state.layers && state.layers[groupKey]) || [];
+  ids.forEach(id=>{
+    try {
+      state.map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none');
+    } catch(e){ /* 해당 속성이 없는 레이어는 조용히 무시 */ }
+  });
+}
+
+/* ===========================================================================
+   [4] 정보량 프리셋
+   ---------------------------------------------------------------------------
+   각 프리셋은 8개 레이어 그룹의 ON(true)/OFF(false) 상태를 정의합니다.
+   'original' 은 커스텀 스타일 원본 그대로 → 스타일 다시 로드.
+   =========================================================================== */
+const DENSITY_PRESETS = {
+  minimal:     { roadLabel:false, building:false, placeLabel:true,  park:true,  water:true,  boundaryLine:false, station:false, bus:false, hospital:false, school:false, shop:false },
+  standard:    { roadLabel:true,  building:true,  placeLabel:true,  park:true,  water:true,  boundaryLine:true,  station:true,  bus:true,  hospital:false, school:false, shop:false },
+  presentation:{ roadLabel:false, building:true,  placeLabel:true,  park:true,  water:true,  boundaryLine:false, station:true,  bus:false, hospital:false, school:false, shop:false },
+  site:        { roadLabel:true,  building:true,  placeLabel:true,  park:true,  water:true,  boundaryLine:true,  station:true,  bus:true,  hospital:true,  school:true,  shop:true  }
+};
+
+function applyDensityPreset(name){
+  if (!state.styleLoaded) { notify('잠시만요','지도 로딩이 끝난 뒤 사용할 수 있습니다.','warn'); return; }
+  state.densityPreset = name;
+  $('#sb-density').textContent = presetLabel('density', name);
+
+  if (name === 'original'){
+    // 원본 복원 = 스타일 다시 로드 (반경/색상은 로드 후 자동 재적용)
+    restoreOriginalStyle();
+    return;
+  }
+  const conf = DENSITY_PRESETS[name];
+  LAYER_GROUPS.forEach(grp=>{
+    const on = conf[grp.key];
+    setGroupVisible(grp.key, on);
+    const cb = document.querySelector(`#layerToggles input[data-group="${grp.key}"]`);
+    if (cb && !cb.disabled) cb.checked = on;
+  });
+  notify('정보량 프리셋 적용', presetLabel('density',name) + ' 적용됨', 'ok');
+}
+
+/* ===========================================================================
+   [5] 색상 커스터마이징
+   =========================================================================== */
+const COLOR_PRESETS = {
+  warm:  { background:'#f4ecdf', road:'#ffffff', building:'#e7dcc4', park:'#dbe6cf', water:'#cfe3e8', label:'#5b5142', boundary:'#bba98a' },
+  mono:  { background:'#f1f1f1', road:'#ffffff', building:'#dcdcdc', park:'#e7e7e7', water:'#e1e1e1', label:'#3a3a3a', boundary:'#b8b8b8' },
+  dark:  { background:'#1f242b', road:'#3a4350', building:'#2b313a', park:'#28323a', water:'#243949', label:'#dfe6ee', boundary:'#4a5563' },
+  brand: { background:'#fbfaf8', road:'#ffffff', building:'#ededea', park:'#e6e9e0', water:'#dde7ea', label:'#41423f', boundary:'#cdcdc7' },
+  // 🎨 Watercolor — 건축 일러스트 / 수채화 톤
+  //  · 도로: 차가운 연회색, 물: 부드러운 티얼 블루
+  //  · 부드러운 세이지 그린 식생, 새하얀 건물, 세피아 라벨
+  watercolor:{ background:'#f5f0e3', road:'#cdd0d4', building:'#fbfaf6', park:'#c4d3b0', water:'#a8c8cc', label:'#6b5d4a', boundary:'#c4b8a0' }
+};
+
+/* 색상 한 종류를 해당 레이어 그룹에 적용 */
+function applyColorKey(ckey, color){
+  if (!state.styleLoaded || !state.layers) return;
+  const map = state.map, g = state.layers;
+  const setPaint = (ids, prop)=> ids.forEach(id=>{
+    try { map.setPaintProperty(id, prop, color); } catch(e){}
+  });
+  if (ckey === 'background'){
+    g.background.forEach(id=>{ try{ map.setPaintProperty(id,'background-color',color);}catch(e){} });
+  } else if (ckey === 'road'){
+    setPaint(g.roadLine, 'line-color');
+  } else if (ckey === 'building'){
+    g.building.forEach(id=>{
+      const t = layerType(id);
+      try { map.setPaintProperty(id, t==='fill-extrusion'?'fill-extrusion-color':'fill-color', color); }catch(e){}
+    });
+  } else if (ckey === 'park'){
+    setPaint(g.park, 'fill-color');
+  } else if (ckey === 'water'){
+    setPaint(g.water, 'fill-color');
+  } else if (ckey === 'label'){
+    setPaint(g.allLabel, 'text-color');
+  } else if (ckey === 'boundary'){
+    setPaint(g.boundaryLine, 'line-color');
+  }
+}
+/* 레이어 type 알아내기 */
+function layerType(id){
+  const L = state.map.getStyle().layers.find(x=>x.id===id);
+  return L ? L.type : '';
+}
+
+/* 우측 색상 선택기 7개의 현재 값을 모두 지도에 적용 */
+function applyColorByPickers(){
+  $$('input[data-ckey]').forEach(inp=>{
+    applyColorKey(inp.dataset.ckey, inp.value);
+  });
+}
+
+/* 색상 프리셋 적용 */
+function applyColorPreset(name){
+  if (!state.styleLoaded){ notify('잠시만요','지도 로딩 후 사용 가능합니다.','warn'); return; }
+  state.colorPreset = name;
+  $('#sb-color').textContent = presetLabel('color', name);
+
+  if (name === 'original'){
+    restoreOriginalStyle();
+    return;
+  }
+
+  /* ── Satellite Hybrid 위성 사진 지도 ── */
+  if (name === 'satellite'){
+    switchToSatellite();
+    return;
+  }
+
+  /* satellite 모드에서 다른 프리셋으로 전환하면 먼저 원본 스타일로 복귀 후 색상 적용 */
+  if (state.isSatellite){
+    state.isSatellite = false;
+    // 팝업 자동 재바인딩 (별도 리셋 불필요)
+    state.map.setStyle(CUSTOM_STYLE_URL);
+    state.map.once('styledata', ()=>{
+      setTimeout(()=>{
+        onStyleReady(); redrawAllRadius();
+        // 색상 프리셋 적용
+        const c = COLOR_PRESETS[name];
+        if (c){
+          Object.keys(c).forEach(k=>{
+            const inp = document.querySelector(`input[data-ckey="${k}"]`);
+            if (inp) inp.value = c[k];
+            applyColorKey(k, c[k]);
+          });
+        }
+        setLoadBadge('is-ok','지도 준비 완료');
+        notify('색상 프리셋 적용', presetLabel('color',name) + ' 적용됨', 'ok');
+      }, 250);
+    });
+    return;
+  }
+
+  const c = COLOR_PRESETS[name];
+  if (!c) return;
+  // 색상 선택기 값도 함께 갱신
+  Object.keys(c).forEach(k=>{
+    const inp = document.querySelector(`input[data-ckey="${k}"]`);
+    if (inp) inp.value = c[k];
+    applyColorKey(k, c[k]);
+  });
+  notify('색상 프리셋 적용', presetLabel('color',name) + ' 적용됨', 'ok');
+}
+
+/* MapTiler Satellite Hybrid 스타일로 전환 */
+function switchToSatellite(){
+  const map = state.map;
+  const SATELLITE_URL = `https://api.maptiler.com/maps/hybrid/style.json?key=${API_KEY}`;
+
+  setLoadBadge('is-loading','위성 지도 로딩 중…');
+  state.isSatellite = true;
+  // 팝업 자동 재바인딩 (별도 리셋 불필요)
+  map.setStyle(SATELLITE_URL);
+  map.once('styledata', ()=>{
+    setTimeout(()=>{
+      onStyleReady();
+      redrawAllRadius();
+      setLoadBadge('is-ok','위성 지도 준비 완료');
+      notify('🛰 Satellite Hybrid', '위성 사진 지도로 전환했습니다. 도로명·지명이 함께 표시됩니다.', 'ok');
+    }, 300);
+  });
+}
+
+/* ===========================================================================
+   [6] 원본 커스텀 스타일 복원
+   ---------------------------------------------------------------------------
+   setStyle 로 스타일을 다시 불러오면 색상/정보량이 원본으로 돌아갑니다.
+   단, 스타일을 다시 로드하면 우리가 추가한 반경 레이어가 사라지므로
+   로드 완료 후 반경을 다시 그려줍니다.
+   =========================================================================== */
+function restoreOriginalStyle(){
+  if (!state.map) return;
+  state.isSatellite = false;   // 위성 모드 해제
+  // 팝업 핸들러는 bindBusClickPopup/bindShopClickPopup 내부에서 자동 재바인딩됩니다
+  setLoadBadge('is-loading', '원본 스타일 복원 중…');
+  state.map.setStyle(CUSTOM_STYLE_URL);
+  state.map.once('styledata', ()=>{
+    // 약간의 지연 후 레이어 재분류 + 반경 다시 그리기
+    setTimeout(()=>{
+      onStyleReady();
+      redrawAllRadius();
+      setLoadBadge('is-ok', '지도 준비 완료');
+      // 색상/정보량 프리셋 표시를 Original로 되돌림
+      state.colorPreset = 'original'; state.densityPreset = 'original';
+      $('#sb-color').textContent = 'Custom Original';
+      $('#sb-density').textContent = 'Custom Original';
+      setActiveChip('#colorPresets', 'original');
+      setActiveChip('#densityPresets', 'original');
+      // 색상 선택기 기본값 복귀
+      resetColorPickers();
+      notify('스타일 복원 완료', '원본 커스텀 스타일로 되돌렸습니다.', 'ok');
+    }, 250);
+  });
+}
+function resetColorPickers(){
+  const def = {background:'#f6f7f9',road:'#ffffff',building:'#e7e7e7',
+               park:'#e3e9da',water:'#cddce6',label:'#4b5563',boundary:'#c4c4c4'};
+  Object.keys(def).forEach(k=>{
+    const inp=document.querySelector(`input[data-ckey="${k}"]`); if(inp) inp.value=def[k];
+  });
+}
+
+/* ===========================================================================
+   [7] 마커 기능
+   =========================================================================== */
+function addMarker(lng, lat, opts){
+  opts = opts || {};
+  const id = 'm' + (state.markerSeq++);
+  const color = opts.color || '#2563eb';
+
+  // MapTiler(MapLibre) 기본 핀 마커 생성
+  const obj = new maptilersdk.Marker({ color: color })
+    .setLngLat([lng, lat])
+    .addTo(state.map);
+
+  // 좌표 표시용 팝업
+  const popup = new maptilersdk.Popup({ offset:28, closeButton:false })
+    .setHTML(`<b>${opts.name || '새 장소'}</b><br>위도 ${lat.toFixed(5)}<br>경도 ${lng.toFixed(5)}`);
+  obj.setPopup(popup);
+
+  // 마커 클릭 → 선택
+  obj.getElement().addEventListener('click', (e)=>{
+    e.stopPropagation();
+    selectMarker(id);
+  });
+
+  const m = {
+    id, lng, lat, color,
+    name: opts.name || ('장소 ' + (state.markerSeq-1)),
+    address: opts.address || '',
+    category: opts.category || '',
+    memo: opts.memo || '',
+    obj
+  };
+  state.markers.push(m);
+  selectMarker(id);
+  renderMarkerList();
+  notify('마커 추가됨', m.name + ' (' + fmtCoord(lng,lat) + ')', 'ok');
+  return m;
+}
+
+/* 마커 선택 */
+function selectMarker(id){
+  state.selectedMarkerId = id;
+  renderPlaceCard();
+  renderMarkerList();
+  const m = getMarker(id);
+  if (m){
+    $('#sb-marker').textContent = fmtCoord(m.lng, m.lat);
+    if (m.obj.getPopup() && !m.obj.getPopup().isOpen()) m.obj.togglePopup();
+  }
+}
+function getMarker(id){ return state.markers.find(m=>m.id===id); }
+
+/* 마커 삭제 */
+function deleteMarker(id){
+  const i = state.markers.findIndex(m=>m.id===id);
+  if (i<0) return;
+  state.markers[i].obj.remove();
+  state.markers.splice(i,1);
+  if (state.selectedMarkerId === id) state.selectedMarkerId = null;
+  renderPlaceCard();
+  renderMarkerList();
+  $('#sb-marker').textContent = '-';
+  notify('마커 삭제', '마커를 삭제했습니다.', 'ok');
+}
+
+/* 마커 색상 변경 (MapLibre 마커는 색만 따로 못 바꾸므로 새로 만듭니다) */
+function changeMarkerColor(id, color){
+  const m = getMarker(id); if(!m) return;
+  m.obj.remove();
+  m.color = color;
+  m.obj = new maptilersdk.Marker({ color })
+    .setLngLat([m.lng, m.lat]).addTo(state.map);
+  m.obj.setPopup(new maptilersdk.Popup({offset:28,closeButton:false})
+    .setHTML(`<b>${m.name}</b><br>위도 ${m.lat.toFixed(5)}<br>경도 ${m.lng.toFixed(5)}`));
+  m.obj.getElement().addEventListener('click',(e)=>{e.stopPropagation();selectMarker(id);});
+  renderMarkerList();
+}
+
+/* 선택한 장소 카드 그리기 */
+function renderPlaceCard(){
+  const area = $('#placeCardArea');
+  const m = getMarker(state.selectedMarkerId);
+  if (!m){
+    area.innerHTML = `<div class="place-card empty">지도를 클릭해 마커를 추가하거나<br>마커를 선택하면 정보가 표시됩니다.</div>`;
+    return;
+  }
+  area.innerHTML = `
+    <div class="place-card">
+      <div class="field"><label>장소명</label>
+        <input type="text" id="pcName" value="${escapeAttr(m.name)}"></div>
+      <div class="field"><label>주소</label>
+        <input type="text" id="pcAddr" value="${escapeAttr(m.address)}" placeholder="주소 입력"></div>
+      <div class="field"><label>카테고리</label>
+        <input type="text" id="pcCat" value="${escapeAttr(m.category)}" placeholder="예: 후보 입지 / 경쟁 매장"></div>
+      <div class="field"><label>위도 / 경도</label>
+        <input type="text" value="${m.lat.toFixed(6)} , ${m.lng.toFixed(6)}" readonly></div>
+      <div class="field"><label>메모</label>
+        <textarea id="pcMemo" placeholder="현장 메모">${escapeHtml(m.memo)}</textarea></div>
+      <div class="field"><label>마커 색상</label>
+        <input type="color" id="pcColor" value="${m.color}" style="width:46px;height:28px;"></div>
+      <div class="btn-grid" style="margin-top:6px;">
+        <button class="btn sm" id="pcSetCenter">🎯 중심점으로</button>
+        <button class="btn sm danger" id="pcDelete">🗑 삭제</button>
+      </div>
+      <button class="btn sm" id="pcRoadview" style="margin-top:6px;width:100%;background:#fef3c7;color:#92400e;border-color:#fde68a;">🛣 이 위치 로드뷰 보기</button>
+      <button class="btn sm" id="pc3D" style="margin-top:6px;width:100%;background:#e0e7ff;color:#3730a3;border-color:#c7d2fe;">🏙 이 위치 3D 건물 보기</button>
+    </div>`;
+  // 입력 즉시 반영
+  $('#pcName').addEventListener('input', e=>{ m.name=e.target.value; renderMarkerList(); });
+  $('#pcAddr').addEventListener('input', e=>{ m.address=e.target.value; });
+  $('#pcCat').addEventListener('input',  e=>{ m.category=e.target.value; renderMarkerList(); });
+  $('#pcMemo').addEventListener('input', e=>{ m.memo=e.target.value; });
+  $('#pcColor').addEventListener('input',e=>{ changeMarkerColor(m.id, e.target.value); });
+  $('#pcSetCenter').addEventListener('click', ()=> setCenterFromMarker(m.id));
+  $('#pcDelete').addEventListener('click', ()=> deleteMarker(m.id));
+  $('#pcRoadview').addEventListener('click', ()=> openRoadview(m.lng, m.lat, m.name || '선택한 위치'));
+  $('#pc3D').addEventListener('click', ()=> open3DAt(m.lng, m.lat, m.name || '선택한 마커'));
+}
+
+/* 마커 목록 그리기 */
+function renderMarkerList(){
+  const box = $('#markerList');
+  const q = ($('#placeSearch').value || '').trim().toLowerCase();
+  let list = state.markers;
+  if (q) list = list.filter(m =>
+    (m.name+m.address+m.category).toLowerCase().includes(q));
+  if (!state.markers.length){
+    box.innerHTML = `<div class="note">아직 추가된 마커가 없습니다.</div>`;
+    return;
+  }
+  if (!list.length){ box.innerHTML = `<div class="note">검색 결과가 없습니다.</div>`; return; }
+  box.innerHTML = '';
+  list.forEach(m=>{
+    const el = document.createElement('div');
+    el.className = 'marker-item' + (m.id===state.selectedMarkerId?' active':'');
+    el.innerHTML = `
+      <span class="pin-dot" style="background:${m.color}"></span>
+      <span class="m-name">${escapeHtml(m.name)}
+        ${m.category?`<span class="m-cat"> · ${escapeHtml(m.category)}</span>`:''}</span>`;
+    el.addEventListener('click', ()=> selectMarker(m.id));
+    box.appendChild(el);
+  });
+}
+
+/* HTML 안전 처리 */
+function escapeHtml(s){ return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function escapeAttr(s){ return (s||'').replace(/"/g,'&quot;'); }
+
+/* ===========================================================================
+   [7b] 주소 검색 — MapTiler Geocoding API
+   ---------------------------------------------------------------------------
+   사용자가 입력한 주소·장소명을 좌표로 변환합니다.
+
+   검색 우선순위:
+   1. 카카오 주소 검색 (KAKAO_JS_KEY가 있을 때) — 한국 도로명주소·건물명 정확도 최고
+   2. MapTiler Geocoding (보조/해외) — 카카오가 없거나 해외 검색일 때
+
+   카카오는 두 가지를 동시에 검색합니다:
+   · 주소 검색 (addressSearch) : "역삼로 234", "강남구 역삼동" 등 정확한 주소
+   · 키워드 검색 (keywordSearch) : "강남역", "코엑스", "스타벅스" 등 장소명/상호
+   =========================================================================== */
+
+/* 검색 진입점 — 카카오 가능하면 카카오 우선, 아니면 MapTiler */
+async function geocodeSearch(query){
+  const box = $('#geoResults');
+  box.innerHTML = '<div class="geo-loading">검색 중…</div>';
+  box.classList.add('show');
+
+  if (state.kakaoReady){
+    kakaoSearch(query);        // 카카오 주소 + 키워드 동시 검색
+  } else {
+    maptilerSearch(query);     // MapTiler 검색 (카카오 키 없을 때)
+  }
+}
+
+/* ────── 카카오 검색 (주소 + 키워드 동시) ────── */
+function kakaoSearch(query){
+  const box = $('#geoResults');
+  const geocoder = new kakao.maps.services.Geocoder();
+  const places = new kakao.maps.services.Places();
+
+  // 두 검색을 동시에 보내고, 둘 다 도착하면 결과를 합칩니다.
+  let addrResults = null, kwResults = null;
+  let done = 0;
+
+  function tryRender(){
+    done++;
+    if (done < 2) return;    // 두 검색 모두 도착할 때까지 대기
+    renderKakaoResults(addrResults, kwResults);
+  }
+
+  // (A) 주소 검색 — "역삼로 234", "강남구 역삼동 123-4" 같은 정확한 주소
+  geocoder.addressSearch(query, (result, status)=>{
+    addrResults = (status === kakao.maps.services.Status.OK) ? result : [];
+    tryRender();
+  });
+
+  // (B) 키워드(장소) 검색 — "강남역", "코엑스", "스타벅스 역삼점" 같은 장소명
+  const center = state.map ? state.map.getCenter() : { lng:126.9816, lat:37.5588 };
+  places.keywordSearch(query, (result, status)=>{
+    kwResults = (status === kakao.maps.services.Status.OK) ? result : [];
+    tryRender();
+  }, {
+    location: new kakao.maps.LatLng(center.lat, center.lng),
+    size: 6                     // 키워드 결과 최대 6개
+  });
+}
+
+/* 카카오 결과 두 종류를 합쳐 드롭다운에 표시 */
+function renderKakaoResults(addrList, kwList){
+  const box = $('#geoResults');
+  addrList = addrList || [];
+  kwList = kwList || [];
+
+  // 주소 결과를 통일된 형식으로 변환
+  const items = [];
+  const seen = new Set();     // 중복 좌표 제거용
+
+  addrList.forEach(a=>{
+    const lng = parseFloat(a.x), lat = parseFloat(a.y);
+    const key = lng.toFixed(5)+','+lat.toFixed(5);
+    if (seen.has(key)) return; seen.add(key);
+    items.push({
+      name: a.address_name || a.road_address?.address_name || query,
+      addr: a.road_address ? a.road_address.address_name : a.address_name,
+      lng, lat,
+      icon: '🏠', type: '주소', source: 'kakao'
+    });
+  });
+
+  kwList.forEach(k=>{
+    const lng = parseFloat(k.x), lat = parseFloat(k.y);
+    const key = lng.toFixed(5)+','+lat.toFixed(5);
+    if (seen.has(key)) return; seen.add(key);
+    // 카카오 카테고리에서 아이콘 결정
+    const cat = (k.category_group_name || '').trim();
+    const icon = cat.includes('음식') ? '🍽️'
+               : cat.includes('카페') ? '☕'
+               : cat.includes('편의') || cat.includes('마트') ? '🏪'
+               : cat.includes('교통') || cat.includes('지하철') ? '🚇'
+               : cat.includes('문화') ? '🎭'
+               : cat.includes('의료') ? '🏥'
+               : cat.includes('교육') ? '🏫'
+               : cat.includes('숙박') ? '🏨'
+               : cat.includes('은행') ? '🏦'
+               : '📍';
+    items.push({
+      name: k.place_name,
+      addr: k.road_address_name || k.address_name || '',
+      lng, lat,
+      icon, type: cat || '장소', source: 'kakao'
+    });
+  });
+
+  if (items.length === 0){
+    // 카카오에서 못 찾으면 MapTiler로 재시도
+    maptilerSearch($('#geoInput').value.trim());
+    return;
+  }
+
+  box.innerHTML = '';
+  items.slice(0, 10).forEach(it=>{
+    const el = document.createElement('div');
+    el.className = 'geo-item';
+    el.innerHTML = `
+      <span class="gi-icon">${it.icon}</span>
+      <div class="gi-body">
+        <div class="gi-name">${escapeHtml(it.name)}</div>
+        <div class="gi-addr">${escapeHtml(it.addr)}</div>
+      </div>
+      <span class="gi-type">${escapeHtml(it.type)}</span>`;
+    el.addEventListener('click', ()=> onGeoSelect({
+      center: [it.lng, it.lat],
+      text: it.name,
+      place_name: it.addr
+    }));
+    box.appendChild(el);
+  });
+}
+
+/* ────── MapTiler 검색 (카카오 키 없을 때 · 해외 검색) ────── */
+async function maptilerSearch(query){
+  const box = $('#geoResults');
+
+  try{
+    const center = state.map ? state.map.getCenter() : { lng:126.9816, lat:37.5588 };
+    const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json`
+      + `?key=${API_KEY}`
+      + `&language=ko`
+      + `&proximity=${center.lng},${center.lat}`
+      + `&limit=8`;
+
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    const features = data.features || [];
+
+    if (features.length === 0){
+      box.innerHTML = '<div class="geo-empty">검색 결과가 없습니다. 다른 키워드를 시도해 보세요.</div>';
+      return;
+    }
+
+    box.innerHTML = '';
+    features.forEach(f=>{
+      const name = f.text || f.place_name || '';
+      const addr = f.place_name || '';
+      const placeType = (f.place_type || [])[0] || '';
+      const [lng, lat] = f.center || [0,0];
+      const icon = placeType==='address'?'🏠':placeType==='poi'?'📍':placeType==='place'?'🏙️':'📌';
+      const typeLabel = {address:'주소',poi:'장소',place:'도시/지역',
+        locality:'지명',neighborhood:'동네',region:'시/도',country:'국가'}[placeType]||placeType;
+
+      const el = document.createElement('div');
+      el.className = 'geo-item';
+      el.innerHTML = `
+        <span class="gi-icon">${icon}</span>
+        <div class="gi-body">
+          <div class="gi-name">${escapeHtml(name)}</div>
+          <div class="gi-addr">${escapeHtml(addr)}</div>
+        </div>
+        <span class="gi-type">${typeLabel}</span>`;
+      el.addEventListener('click', ()=> onGeoSelect(f));
+      box.appendChild(el);
+    });
+  }catch(e){
+    console.error('Geocoding error:', e);
+    box.innerHTML = `<div class="geo-empty" style="color:var(--danger)">
+      검색 오류: ${e.message}</div>`;
+  }
+}
+
+/* 검색 결과 클릭 시 처리 — 지도 이동 + 마커 자동 추가 */
+function onGeoSelect(feature){
+  const [lng, lat] = feature.center;
+  const name = feature.text || feature.place_name || '검색 장소';
+  const addr = feature.place_name || '';
+
+  // (1) 드롭다운 닫기
+  $('#geoResults').classList.remove('show');
+  // (2) 검색창에 장소명 표시
+  $('#geoInput').value = name;
+
+  // (3) 선택된 장소 안내 칩 표시
+  $('#geoSelectedChip').innerHTML = `
+    <div class="selected-place-chip">
+      <span class="spc-name">📍 ${escapeHtml(name)}</span>
+      <button class="spc-x" id="geoChipClear">✕</button>
+    </div>`;
+  $('#geoChipClear').addEventListener('click', ()=>{
+    $('#geoSelectedChip').innerHTML = '';
+    $('#geoInput').value = '';
+    $('#geoClear').classList.remove('show');
+  });
+
+  // (4) 해당 위치로 부드럽게 이동
+  const targetZoom = Math.max(state.map.getZoom(), 15);
+  state.map.flyTo({ center:[lng, lat], zoom: targetZoom, duration:1200 });
+
+  // (5) 마커 추가 (이름+주소 자동 입력)
+  const m = addMarker(lng, lat, { name: name, address: addr });
+
+  // (6) 중심점이 아직 없으면 이 위치를 반경 중심으로 자동 설정
+  if (!state.center){
+    setCenter(lng, lat);
+    notify('중심점 자동 지정', '첫 검색 위치를 반경 중심으로 지정했습니다. (변경 가능)', 'ok');
+  }
+
+  notify('장소 이동', `"${name}" 위치로 이동했습니다.`, 'ok');
+}
+
+/* ===========================================================================
+   [8] 반경 중심점 설정
+   =========================================================================== */
+function setCenter(lng, lat){
+  state.center = { lng, lat };
+  $('#centerText').value = fmtCoord(lng, lat);
+  $('#iv-center').textContent = fmtCoord(lng, lat);
+
+  // 지도 위 중심점 표시 마커(십자) 갱신
+  if (state.centerMarkerObj) state.centerMarkerObj.remove();
+  const el = document.createElement('div');
+  el.className = 'center-marker';
+  el.innerHTML = `<div class="ring"></div><div class="cross-h"></div><div class="cross-v"></div>`;
+  state.centerMarkerObj = new maptilersdk.Marker({ element: el })
+    .setLngLat([lng, lat]).addTo(state.map);
+}
+function setCenterFromMarker(id){
+  const m = getMarker(id || state.selectedMarkerId);
+  if (!m){ notify('마커 없음','먼저 마커를 선택하세요.','warn'); return; }
+  setCenter(m.lng, m.lat);
+  notify('중심점 지정', m.name + ' 을(를) 반경 중심으로 지정했습니다.', 'ok');
+}
+function setCenterFromMapCenter(){
+  if (!state.map){ return; }
+  const c = state.map.getCenter();
+  setCenter(c.lng, c.lat);
+  notify('중심점 지정', '현재 지도 중심을 반경 중심으로 지정했습니다.', 'ok');
+}
+
+/* ===========================================================================
+   [9] 반경 생성 - 핵심 기능
+   ---------------------------------------------------------------------------
+   · 입력값은 '반경 간격'입니다. (간격 × 1, 간격 × 2 … 동심원)
+   · Turf.circle 로 실제 거리 기준 GeoJSON 원(Polygon)을 만듭니다.
+   · 줌을 바꿔도 실제 거리는 유지됩니다(화면 위 가짜 원이 아님).
+   =========================================================================== */
+function generateRadius(){
+  if (!state.styleLoaded){ notify('잠시만요','지도 로딩 후 사용 가능합니다.','warn'); return; }
+  if (!state.center){
+    notify('중심점이 없습니다','먼저 반경 중심점을 지정하세요. (지도 클릭 또는 버튼 사용)','warn');
+    return;
+  }
+  // 입력값 읽기 + 보정
+  let interval = parseFloat($('#radiusInterval').value);
+  const unit = $('#radiusUnit').value;
+  let count = parseInt($('#radiusCount').value, 10);
+
+  if (!interval || interval <= 0){
+    interval = 1;
+    $('#radiusInterval').value = 1;
+    notify('값 보정','반경 간격이 0 이하라 1로 보정했습니다.','warn');
+  }
+  // 개수는 최소 1, 최대 5 로 제한
+  if (isNaN(count) || count < 1){ count = 1; }
+  if (count > 5){ count = 5; notify('값 보정','반경 개수는 최대 5개입니다. 5개로 제한했습니다.','warn'); }
+  $('#radiusCount').value = count;
+
+  // 기존 반경 제거 후 새로 생성
+  clearRadius(true);
+
+  const intervalKm = toKm(interval, unit);
+  for (let i=1; i<=count; i++){
+    createRadiusRing(intervalKm * i, i);
+  }
+  updateStatusBar();
+  updateInfoTable();
+  notify('반경 생성 완료', count + '개의 반경 원을 생성했습니다.', 'ok');
+}
+
+/* 반경 원 1개를 지도에 추가 */
+function createRadiusRing(radiusKm, index){
+  const map = state.map;
+  const center = [state.center.lng, state.center.lat];
+  const id = 'radius_' + Date.now() + '_' + index;
+
+  // Turf.js 로 실제 거리 기준 원(Polygon) 생성
+  const circle = turf.circle(center, radiusKm, { steps:128, units:'kilometers' });
+
+  // 라벨용 점 = 원의 정북(위쪽) 가장자리
+  const labelPt = turf.destination(center, radiusKm, 0, { units:'kilometers' });
+  labelPt.properties = { label: fmtRadius(radiusKm) };
+
+  const fillSrc = id + '_fillsrc', labelSrc = id + '_lblsrc';
+  const fillLy = id + '_fill', lineLy = id + '_line', labelLy = id + '_label';
+
+  map.addSource(fillSrc, { type:'geojson', data:circle });
+  map.addSource(labelSrc,{ type:'geojson', data:labelPt });
+
+  // 채움 레이어
+  map.addLayer({
+    id: fillLy, type:'fill', source:fillSrc,
+    paint:{ 'fill-color': state.radiusStyle.fillColor,
+            'fill-opacity': state.radiusStyle.fillOpacity }
+  });
+  // 외곽선 레이어
+  // ※ line-dasharray 는 [칠하는 길이, 비우는 길이, ...] 를 '선 두께의 배수'로 지정합니다.
+  //   solid(실선)는 dasharray 속성을 아예 넣지 않아야 깔끔하게 그려집니다.
+  const lineLayer = {
+    id: lineLy, type:'line', source:fillSrc,
+    paint:{ 'line-color': state.radiusStyle.lineColor,
+            'line-width': state.radiusStyle.lineWidth }
+  };
+  const dash = dashArrayOf(state.radiusStyle.lineStyle);
+  if (dash) lineLayer.paint['line-dasharray'] = dash;   // 점선류일 때만 추가
+  map.addLayer(lineLayer);
+  // 라벨 레이어
+  map.addLayer({
+    id: labelLy, type:'symbol', source:labelSrc,
+    layout:{ 'text-field': ['get','label'], 'text-size':12,
+             'text-font': getLabelFont(),          // ← 커스텀 스타일의 실제 폰트 사용
+             'text-offset':[0,-0.6],
+             'visibility': state.radiusStyle.showLabel ? 'visible':'none' },
+    paint:{ 'text-color': state.radiusStyle.labelColor,
+            'text-halo-color':'#ffffff', 'text-halo-width':2 }
+  });
+
+  state.radiusRings.push({ id, radiusKm, fillSrc, labelSrc, fillLy, lineLy, labelLy });
+}
+
+/* 반경 전체 삭제 */
+function clearRadius(silent){
+  state.radiusRings.forEach(r=> removeRingLayers(r));
+  state.radiusRings = [];
+  if (!silent){
+    updateStatusBar(); updateInfoTable();
+    notify('반경 초기화', '모든 반경을 삭제했습니다.', 'ok');
+  }
+}
+/* 가장 바깥 반경 1개만 삭제 */
+function deleteLastRadius(){
+  if (!state.radiusRings.length){ notify('반경 없음','삭제할 반경이 없습니다.','warn'); return; }
+  const r = state.radiusRings.pop();
+  removeRingLayers(r);
+  updateStatusBar(); updateInfoTable();
+  notify('반경 삭제', fmtRadius(r.radiusKm) + ' 반경을 삭제했습니다.', 'ok');
+}
+function removeRingLayers(r){
+  const map = state.map;
+  [r.fillLy, r.lineLy, r.labelLy].forEach(l=>{ if(map.getLayer(l)) map.removeLayer(l); });
+  [r.fillSrc, r.labelSrc].forEach(s=>{ if(map.getSource(s)) map.removeSource(s); });
+}
+
+/* 스타일을 다시 로드한 경우 반경을 그대로 다시 그리기 */
+function redrawAllRadius(){
+  if (!state.radiusRings.length || !state.center) return;
+  const saved = state.radiusRings.map(r=>r.radiusKm).sort((a,b)=>a-b);
+  state.radiusRings = [];
+  saved.forEach((km,i)=> createRadiusRing(km, i+1));
+}
+
+/* 반경 스타일(색/투명도/두께/선종류/라벨) 변경 즉시 반영 */
+function applyRadiusStyle(){
+  const s = state.radiusStyle;
+  const dash = dashArrayOf(s.lineStyle);
+  state.radiusRings.forEach(r=>{
+    try{
+      state.map.setPaintProperty(r.fillLy, 'fill-color', s.fillColor);
+      state.map.setPaintProperty(r.fillLy, 'fill-opacity', s.fillOpacity);
+      state.map.setPaintProperty(r.lineLy, 'line-color', s.lineColor);
+      state.map.setPaintProperty(r.lineLy, 'line-width', s.lineWidth);
+      // 선 종류: 점선류는 dasharray 지정, 실선은 [1] (한 칸만 칠함 = 실선과 동일)
+      state.map.setPaintProperty(r.lineLy, 'line-dasharray', dash || [1]);
+      state.map.setPaintProperty(r.labelLy,'text-color', s.labelColor);
+      state.map.setLayoutProperty(r.labelLy,'visibility', s.showLabel?'visible':'none');
+    }catch(e){}
+  });
+}
+
+/* 반경 미리보기 안내문 갱신 */
+function updateRadiusPreview(){
+  let interval = parseFloat($('#radiusInterval').value) || 0;
+  const unit = $('#radiusUnit').value;
+  let count = Math.min(Math.max(parseInt($('#radiusCount').value,10)||1,1),5);
+  const km = toKm(interval, unit);
+  const arr = [];
+  for (let i=1;i<=count;i++) arr.push(fmtRadius(km*i));
+  $('#radiusPreviewNote').textContent = '예상 반경: ' + (arr.join(' · ') || '-');
+}
+
+/* ===========================================================================
+   [10] 하단 상태바 / 분석 정보 표 갱신
+   =========================================================================== */
+function updateStatusBar(){
+  if (!state.map) return;
+  const c = state.map.getCenter();
+  $('#sb-center').textContent = fmtCoord(c.lng, c.lat);
+  $('#sb-zoom').textContent = state.map.getZoom().toFixed(2);
+  $('#sb-rcount').textContent = state.radiusRings.length;
+  const iv = $('#radiusInterval').value + ($('#radiusUnit').value);
+  $('#sb-rinterval').textContent = iv;
+  $('#sb-size').textContent = currentSizeLabel();
+  $('#sb-scope').textContent = scopeLabel(state.download.scope);
+}
+function updateInfoTable(){
+  $('#iv-interval').textContent = $('#radiusInterval').value + ' ' + $('#radiusUnit').value;
+  $('#iv-count').textContent = state.radiusRings.length + ' 개';
+  $('#iv-zoom').textContent = state.map ? state.map.getZoom().toFixed(2) : '-';
+  $('#iv-scope').textContent = scopeLabel(state.download.scope);
+  $('#iv-size').textContent = currentSizeLabel();
+}
+
+/* ===========================================================================
+   [11] 다운로드 - 핵심 기능
+   ---------------------------------------------------------------------------
+   방식 A : 브라우저 캔버스 캡처 (기본·권장)
+            - 지도를 원하는 크기로 잠시 리사이즈 → WebGL 캔버스를 그대로 캡처
+            - 반경/라벨은 지도 위에 그려져 있어 자동 포함
+            - 마커(DOM 핀)는 캔버스 위에 따로 다시 그려 합성
+   방식 B : MapTiler Static Maps API
+            - 서버에서 이미지를 렌더 → 매우 고해상도
+            - 단, 요금제/플랜에 따라 막힐 수 있어 보조 옵션
+   =========================================================================== */
+
+/* 현재 선택된 '기준 크기'를 [너비,높이] 로 반환 (배율 적용 전) */
+function getDownloadSize(){
+  const v = $('#dlSize').value;
+  if (v === 'custom'){
+    const w = parseInt($('#dlW').value,10) || 1920;
+    const h = parseInt($('#dlH').value,10) || 1080;
+    return [Math.max(200,Math.min(w,5000)), Math.max(200,Math.min(h,5000))];
+  }
+  const [w,h] = v.split('x').map(Number);
+  return [w,h];
+}
+/* 화질 배율 (1~4) */
+function getDownloadScale(){
+  return parseInt($('#dlScale').value,10) || 1;
+}
+/* 실제 저장될 최종 크기 = 기준 크기 × 배율 */
+function getFinalSize(){
+  const [w,h] = getDownloadSize();
+  const s = getDownloadScale();
+  return [w*s, h*s];
+}
+function currentSizeLabel(){ const [w,h]=getFinalSize(); return w+'×'+h; }
+function scopeLabel(s){
+  return s==='map'?'지도만': s==='info'?'지도+마커+반경+정보' : '지도+마커+반경';
+}
+
+/* --- 방식 A : 캔버스 캡처로 고해상도 합성 이미지(canvas) 만들기 ---
+   원리:
+   · 화면에 안 보이는 곳에 '임시 지도'를 하나 더 만듭니다.
+   · 그 임시 지도는 pixelRatio(픽셀 배율)를 2~4배로 올려서 생성합니다.
+     → 같은 화면 영역을 훨씬 촘촘한 픽셀로 그려서 인쇄해도 선명합니다.
+   · 현재 지도와 똑같은 스타일·위치·반경·마커를 그대로 복제합니다.
+   · 다 그린 뒤 임시 지도는 제거합니다. (원래 지도는 건드리지 않음) */
+async function buildCanvasImage(){
+  const srcMap = state.map;
+  const [baseW, baseH] = getDownloadSize();   // 기준 크기
+  const scale = getDownloadScale();           // 화질 배율 (1~4)
+
+  // 캔버스 크기에 맞춰 줌 자동 조정 (화면 시야 그대로 캡처)
+  const srcCanvasEl = srcMap.getCanvas();
+  const srcW = srcCanvasEl.clientWidth  || srcCanvasEl.width;
+  const srcH = srcCanvasEl.clientHeight || srcCanvasEl.height;
+  const zoomDelta = Math.min(
+    Math.log2(baseW / srcW),
+    Math.log2(baseH / srcH)
+  );
+  const adjustedZoom = srcMap.getZoom() + Math.max(0, zoomDelta);
+
+  // (1) 화면 밖에 임시 컨테이너 생성 (기준 크기로 만들고 pixelRatio로 화질을 올림)
+  const holder = document.createElement('div');
+  holder.style.cssText =
+    `position:fixed;left:-99999px;top:0;width:${baseW}px;height:${baseH}px;`;
+  document.body.appendChild(holder);
+
+  // (2) 임시 지도 생성 - 핵심: pixelRatio 를 배율만큼 크게
+  //     현재 모드(위성/커스텀)에 맞는 스타일 URL 사용
+  const currentStyleUrl = state.isSatellite
+    ? `https://api.maptiler.com/maps/hybrid/style.json?key=${API_KEY}`
+    : CUSTOM_STYLE_URL;
+  const tmpMap = new maptilersdk.Map({
+    container: holder,
+    style: currentStyleUrl,
+    center: srcMap.getCenter(),
+    zoom: adjustedZoom,
+    bearing: srcMap.getBearing(),
+    pitch: srcMap.getPitch(),
+    pixelRatio: scale,                 // ← 화질의 핵심. 2면 가로·세로 2배 픽셀
+    interactive: false,
+    attributionControl: false,
+    preserveDrawingBuffer: true
+  });
+
+  // (3) 임시 지도의 스타일 로딩 대기
+  await new Promise((res)=>{
+    tmpMap.once('load', res);
+    setTimeout(res, 12000);            // 안전장치
+  });
+
+  // (4) 현재 화면 지도의 '레이어 표시상태(정보량)'를 임시 지도에 복제
+  copyLayerVisibility(srcMap, tmpMap);
+  // (5) 현재 색상 커스터마이징을 임시 지도에도 복제
+  copyPaintColors(srcMap, tmpMap);
+  // (6) 반경 원을 임시 지도에 다시 그림
+  drawRadiusOnMap(tmpMap);
+  // (6b) 다운로드 체크박스에 따라 점 정보 오버레이를 임시 지도에 추가
+  drawOverlaysOnMap(tmpMap);
+
+  // (7) 렌더 안정화 대기
+  await new Promise((res)=>{ tmpMap.once('idle', res); setTimeout(res, 3000); });
+
+  // (8) 임시 지도의 캔버스를 최종 캔버스로 복사
+  const srcCanvas = tmpMap.getCanvas();
+  const out = document.createElement('canvas');
+  out.width = srcCanvas.width;        // = baseW × scale
+  out.height = srcCanvas.height;      // = baseH × scale
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#ffffff';          // JPG 대비 흰 배경
+  ctx.fillRect(0,0,out.width,out.height);
+  ctx.drawImage(srcCanvas, 0, 0, out.width, out.height);
+
+  // 이후 그리기 좌표 계산용 배율 (캔버스픽셀 / 기준픽셀)
+  const dpr = out.width / baseW;      // = scale
+
+  // (9) 마커를 캔버스 위에 직접 그림 (저장범위가 '지도만'이 아닐 때)
+  if (state.download.scope !== 'map'){
+    state.markers.forEach(m=>{
+      const p = tmpMap.project([m.lng, m.lat]);   // 지리좌표 → 화면 픽셀
+      drawPin(ctx, p.x*dpr, p.y*dpr, m.color, m.name, dpr);
+    });
+  }
+
+  // (10) 저장범위가 'info' 면 좌상단에 장소 정보 카드
+  if (state.download.scope === 'info'){
+    drawInfoCard(ctx, dpr);
+  }
+
+  // (11) 저작권 표기
+  if (state.download.copyright){
+    drawCopyright(ctx, out.width, out.height, dpr);
+  }
+
+  // (12) 임시 지도/컨테이너 정리 (메모리 해제)
+  tmpMap.remove();
+  holder.remove();
+
+  return out;
+}
+
+/* 화면 지도의 레이어 표시/숨김 상태를 대상 지도로 복제 */
+function copyLayerVisibility(fromMap, toMap){
+  try{
+    const layers = fromMap.getStyle().layers || [];
+    layers.forEach(L=>{
+      const vis = fromMap.getLayoutProperty(L.id, 'visibility');
+      if (vis && toMap.getLayer(L.id)){
+        toMap.setLayoutProperty(L.id, 'visibility', vis);
+      }
+    });
+  }catch(e){ console.warn('레이어 표시상태 복제 일부 실패', e); }
+}
+
+/* 화면 지도의 색상(paint) 설정을 대상 지도로 복제 */
+function copyPaintColors(fromMap, toMap){
+  try{
+    const layers = fromMap.getStyle().layers || [];
+    const props = ['background-color','line-color','fill-color',
+                   'fill-extrusion-color','text-color'];
+    layers.forEach(L=>{
+      if (!toMap.getLayer(L.id)) return;
+      props.forEach(p=>{
+        try{
+          const v = fromMap.getPaintProperty(L.id, p);
+          if (v !== undefined && v !== null){
+            toMap.setPaintProperty(L.id, p, v);
+          }
+        }catch(e){}
+      });
+    });
+  }catch(e){ console.warn('색상 복제 일부 실패', e); }
+}
+
+/* 대상 지도에 현재 반경 원들을 그림 (다운로드용 임시 지도에 사용) */
+function drawRadiusOnMap(toMap){
+  if (!state.center || !state.radiusRings.length) return;
+  const s = state.radiusStyle;
+  const dash = dashArrayOf(s.lineStyle);
+  state.radiusRings.forEach((r, idx)=>{
+    const center = [state.center.lng, state.center.lat];
+    const circle = turf.circle(center, r.radiusKm, { steps:128, units:'kilometers' });
+    const labelPt = turf.destination(center, r.radiusKm, 0, { units:'kilometers' });
+    labelPt.properties = { label: fmtRadius(r.radiusKm) };
+
+    const fSrc='dl_fs_'+idx, lSrc='dl_ls_'+idx;
+    const fLy='dl_f_'+idx, lLy='dl_l_'+idx, tLy='dl_t_'+idx;
+    toMap.addSource(fSrc, { type:'geojson', data:circle });
+    toMap.addSource(lSrc, { type:'geojson', data:labelPt });
+    toMap.addLayer({ id:fLy, type:'fill', source:fSrc,
+      paint:{ 'fill-color':s.fillColor, 'fill-opacity':s.fillOpacity } });
+    const lineLayer = { id:lLy, type:'line', source:fSrc,
+      paint:{ 'line-color':s.lineColor, 'line-width':s.lineWidth } };
+    if (dash) lineLayer.paint['line-dasharray'] = dash;
+    toMap.addLayer(lineLayer);
+    if (s.showLabel){
+      toMap.addLayer({ id:tLy, type:'symbol', source:lSrc,
+        layout:{ 'text-field':['get','label'], 'text-size':12,
+                 'text-font': getLabelFont(), 'text-offset':[0,-0.6] },
+        paint:{ 'text-color':s.labelColor,
+                'text-halo-color':'#ffffff', 'text-halo-width':2 } });
+    }
+  });
+}
+
+/* 다운로드용 임시 지도에 점 정보 오버레이 추가 (체크박스 설정에 따라) */
+function drawOverlaysOnMap(toMap){
+  // 임시 지도에서 벡터 소스 찾기
+  const sources = toMap.getStyle().sources || {};
+  let omtSrc = null;
+  for (const [name, src] of Object.entries(sources)){
+    if (src && src.type === 'vector') { omtSrc = name; break; }
+  }
+  if (!omtSrc) return;
+
+  const font = getLabelFont();
+  const koText = ['coalesce', ['get','name:ko'], ['get','name']];
+  const k = dotSizeMultiplier(OVERLAY_STYLE.dotSize);   // 점 크기 배율
+  let idx = 0;
+
+  // 체크박스 상태 읽기
+  const inc = {
+    station:  $('#dlStation').checked,
+    bus:      $('#dlBus').checked,
+    hospital: $('#dlHospital').checked,
+    school:   $('#dlSchool').checked,
+    shop:     $('#dlShop').checked
+  };
+
+  /* 지하철 / 기차역 */
+  if (inc.station){
+    const f = ['in',['get','subclass'],['literal',['subway','station','railway','halt','tram_stop','ferry_terminal']]];
+    toMap.addLayer({ id:'dl_ovl_'+(idx++), type:'circle', source:omtSrc, 'source-layer':'poi',
+      filter:f, minzoom:0,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],11,3*k,16,6*k],
+             'circle-color':OVERLAY_STYLE.station.dotColor,'circle-stroke-color':'#fff','circle-stroke-width':1.5}
+    });
+    if (OVERLAY_STYLE.showStationLabel){
+      toMap.addLayer({ id:'dl_ovl_'+(idx++), type:'symbol', source:omtSrc, 'source-layer':'poi',
+        filter:f, minzoom:0,
+        layout:{'text-field':koText,'text-font':font,'text-size':['interpolate',['linear'],['zoom'],12,10,16,13],
+                'text-offset':[0,1.1*k],'text-anchor':'top','text-optional':true},
+        paint:{'text-color':OVERLAY_STYLE.station.labelColor,'text-halo-color':'#fff','text-halo-width':1.8}
+      });
+    }
+  }
+
+  /* 버스정류장 */
+  if (inc.bus){
+    const f = ['in',['get','subclass'],['literal',['bus_stop','bus_station']]];
+    toMap.addLayer({ id:'dl_ovl_'+(idx++), type:'circle', source:omtSrc, 'source-layer':'poi',
+      filter:f, minzoom:0,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],13,2.5*k,16,4.5*k],
+             'circle-color':OVERLAY_STYLE.bus.dotColor,'circle-stroke-color':'#fff','circle-stroke-width':1.2}
+    });
+  }
+
+  /* 병원 */
+  if (inc.hospital){
+    const f = ['in',['get','subclass'],['literal',['hospital','clinic','doctors']]];
+    toMap.addLayer({ id:'dl_ovl_'+(idx++), type:'circle', source:omtSrc, 'source-layer':'poi',
+      filter:f, minzoom:0,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],12,2.5*k,16,5*k],
+             'circle-color':OVERLAY_STYLE.hospital.dotColor,'circle-stroke-color':'#fff','circle-stroke-width':1.2}
+    });
+    toMap.addLayer({ id:'dl_ovl_'+(idx++), type:'symbol', source:omtSrc, 'source-layer':'poi',
+      filter:f, minzoom:0,
+      layout:{'text-field':koText,'text-font':font,'text-size':['interpolate',['linear'],['zoom'],13,9,16,12],
+              'text-offset':[0,0.9*k],'text-anchor':'top','text-optional':true},
+      paint:{'text-color':OVERLAY_STYLE.hospital.labelColor,'text-halo-color':'#fff','text-halo-width':1.5}
+    });
+  }
+
+  /* 학교 */
+  if (inc.school){
+    const f = ['in',['get','subclass'],['literal',['school','kindergarten','college','university']]];
+    toMap.addLayer({ id:'dl_ovl_'+(idx++), type:'circle', source:omtSrc, 'source-layer':'poi',
+      filter:f, minzoom:0,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],12,2.5*k,16,5*k],
+             'circle-color':OVERLAY_STYLE.school.dotColor,'circle-stroke-color':'#fff','circle-stroke-width':1.2}
+    });
+    toMap.addLayer({ id:'dl_ovl_'+(idx++), type:'symbol', source:omtSrc, 'source-layer':'poi',
+      filter:f, minzoom:0,
+      layout:{'text-field':koText,'text-font':font,'text-size':['interpolate',['linear'],['zoom'],13,9,16,12],
+              'text-offset':[0,0.9*k],'text-anchor':'top','text-optional':true},
+      paint:{'text-color':OVERLAY_STYLE.school.labelColor,'text-halo-color':'#fff','text-halo-width':1.5}
+    });
+  }
+
+  /* 판매시설 */
+  if (inc.shop){
+    const f = ['in',['get','subclass'],['literal',['department_store','supermarket','mall','marketplace','furniture','convention_centre']]];
+    toMap.addLayer({ id:'dl_ovl_'+(idx++), type:'circle', source:omtSrc, 'source-layer':'poi',
+      filter:f, minzoom:0,
+      paint:{'circle-radius':['interpolate',['linear'],['zoom'],12,2.5*k,16,5*k],
+             'circle-color':OVERLAY_STYLE.shop.dotColor,'circle-stroke-color':'#fff','circle-stroke-width':1.2}
+    });
+    // ※ 판매시설은 버스처럼 점만 — 라벨은 다운로드 이미지에도 포함하지 않습니다
+  }
+}
+
+/* 캔버스에 마커 핀 그리기 */
+function drawPin(ctx, x, y, color, label, dpr){
+  const r = 9*dpr;
+  ctx.save();
+  // 핀 머리(원)
+  ctx.beginPath();
+  ctx.arc(x, y-r, r, 0, Math.PI*2);
+  ctx.fillStyle = color; ctx.fill();
+  ctx.lineWidth = 2*dpr; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+  // 핀 꼬리(삼각형)
+  ctx.beginPath();
+  ctx.moveTo(x-r*0.55, y-r*0.7); ctx.lineTo(x+r*0.55, y-r*0.7); ctx.lineTo(x, y+r*0.5);
+  ctx.closePath(); ctx.fillStyle=color; ctx.fill();
+  // 가운데 흰 점
+  ctx.beginPath(); ctx.arc(x, y-r, r*0.32, 0, Math.PI*2);
+  ctx.fillStyle='#ffffff'; ctx.fill();
+  // 라벨
+  if (label){
+    ctx.font = (12*dpr)+'px Pretendard, sans-serif';
+    const tw = ctx.measureText(label).width;
+    const pad = 5*dpr, bx = x-tw/2-pad, by = y+r*0.7, bw = tw+pad*2, bh = 18*dpr;
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    roundRect(ctx, bx, by, bw, bh, 4*dpr); ctx.fill();
+    ctx.fillStyle = '#1f2937';
+    ctx.textBaseline='middle'; ctx.textAlign='center';
+    ctx.fillText(label, x, by+bh/2);
+  }
+  ctx.restore();
+}
+function roundRect(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+
+/* 캔버스에 장소 정보 카드 그리기 (저장범위 'info') */
+function drawInfoCard(ctx, dpr){
+  const m = getMarker(state.selectedMarkerId);
+  const lines = [];
+  if (m){
+    lines.push(['장소', m.name]);
+    if (m.address) lines.push(['주소', m.address]);
+    if (m.category) lines.push(['카테고리', m.category]);
+    lines.push(['좌표', m.lat.toFixed(5)+', '+m.lng.toFixed(5)]);
+  }
+  if (state.center){
+    lines.push(['반경 중심', state.center.lat.toFixed(5)+', '+state.center.lng.toFixed(5)]);
+  }
+  if (state.radiusRings.length){
+    const list = state.radiusRings.map(r=>fmtRadius(r.radiusKm)).join(' / ');
+    lines.push(['반경', list]);
+  }
+  if (!lines.length) return;
+
+  const pad=14*dpr, lh=22*dpr, x=18*dpr, y=18*dpr;
+  const cardW = 320*dpr, cardH = pad*2 + lh*(lines.length) + 24*dpr;
+  ctx.save();
+  ctx.fillStyle='rgba(255,255,255,.96)';
+  roundRect(ctx, x, y, cardW, cardH, 8*dpr); ctx.fill();
+  ctx.strokeStyle='#e5e7eb'; ctx.lineWidth=1*dpr; ctx.stroke();
+  // 제목
+  ctx.fillStyle='#2563eb';
+  ctx.font='700 '+(13*dpr)+'px Pretendard, sans-serif';
+  ctx.textAlign='left'; ctx.textBaseline='top';
+  ctx.fillText('입지 분석 정보', x+pad, y+pad);
+  // 본문
+  let ty = y+pad+24*dpr;
+  lines.forEach(([k,v])=>{
+    ctx.fillStyle='#94a3b8'; ctx.font=(11*dpr)+'px Pretendard, sans-serif';
+    ctx.fillText(k, x+pad, ty);
+    ctx.fillStyle='#1f2937'; ctx.font='600 '+(12*dpr)+'px Pretendard, sans-serif';
+    ctx.fillText(String(v).slice(0,34), x+pad+70*dpr, ty);
+    ty += lh;
+  });
+  ctx.restore();
+}
+
+/* 저작권 문구 그리기 (이미지 하단 우측) */
+function drawCopyright(ctx, W, H, dpr){
+  const text = 'Map image © MapTiler © OpenStreetMap contributors';
+  ctx.save();
+  ctx.font = (11*dpr)+'px Pretendard, sans-serif';
+  const tw = ctx.measureText(text).width;
+  const pad=6*dpr, bw=tw+pad*2, bh=20*dpr;
+  ctx.fillStyle='rgba(255,255,255,.78)';
+  ctx.fillRect(W-bw-8*dpr, H-bh-8*dpr, bw, bh);
+  ctx.fillStyle='#475569';
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.fillText(text, W-bw-8*dpr+pad, H-bh-8*dpr+bh/2);
+  ctx.restore();
+}
+
+/* --- 방식 B : Static Maps API URL 만들기 --- */
+function buildStaticUrl(){
+  const [w,h] = getDownloadSize();        // 기준 크기
+  const scale = getDownloadScale();
+  const c = state.map.getCenter();
+  const z = state.map.getZoom();
+  // Static API는 파일명 뒤 '@2x' 로 2배 고해상도를 지원합니다.
+  // (지원 배율은 @2x 까지이므로 2 이상이면 @2x 사용)
+  const hires = scale >= 2 ? '@2x' : '';
+  // 기본 URL : 커스텀 스타일 + 중심 + 줌 + 크기
+  let url = `https://api.maptiler.com/maps/${CUSTOM_STYLE_ID}/static/`
+          + `${c.lng.toFixed(5)},${c.lat.toFixed(5)},${z.toFixed(2)}/`
+          + `${w}x${h}${hires}.png?key=${API_KEY}`;
+  // 마커 추가 (저장범위가 지도만이 아닐 때)
+  if (state.download.scope !== 'map' && state.markers.length){
+    const mk = state.markers
+      .slice(0,20)
+      .map(m=>`${m.lng.toFixed(5)},${m.lat.toFixed(5)}`)
+      .join('|');
+    url += `&markers=${mk}`;
+  }
+  // 반경 외곽선 path 추가 (점 수를 줄여 URL 길이 관리)
+  // 참고: Static API의 path는 실선만 지원합니다. 점선 외곽선을 그대로 저장하려면
+  //       다운로드 방식을 '브라우저 캡처'로 두세요(화면을 그대로 찍어 점선이 유지됨).
+  if (state.download.scope !== 'map' && state.radiusRings.length && state.center){
+    const parts = [];
+    state.radiusRings.forEach(r=>{
+      const circ = turf.circle([state.center.lng,state.center.lat], r.radiusKm,
+                               { steps:40, units:'kilometers' });
+      const coords = circ.geometry.coordinates[0]
+        .map(p=>`${p[0].toFixed(4)},${p[1].toFixed(4)}`).join('|');
+      const col = state.radiusStyle.lineColor.replace('#','');
+      parts.push(`path=stroke:%23${col}|width:2|${coords}`);
+    });
+    const extra = '&' + parts.join('&');
+    // URL이 너무 길면(서버 한계) 반경은 제외
+    if ((url+extra).length < 7500) url += extra;
+    else notify('안내','반경 원이 많아 Static API URL에는 반경을 제외했습니다. (브라우저 캡처 방식 권장)','warn');
+  }
+  return url;
+}
+
+/* 다운로드 미리보기 모달 열기 */
+/* ═══════════════════════════════════════════════════════════════
+   미리보기 + 지우개 시스템
+   ═══════════════════════════════════════════════════════════════ */
+let previewCanvas = null;
+
+/* 지우개용 전역 상태 */
+const eraser = {
+  baseCanvas: null,    // 오버레이 점 없는 베이스 (지도+반경+마커)
+  points: [],          // [{type,name,cx,cy,color,labelColor,radius,removed}]
+  undoStack: [],       // 되돌리기 스택
+  dpr: 1,              // 캔버스 픽셀 배율
+  active: false,       // 지우개 모드 활성 여부
+  outW: 0, outH: 0     // 캔버스 원본 크기
+};
+
+async function openDownloadPreview(){
+  if (!state.styleLoaded){ notify('잠시만요','지도 로딩 후 사용 가능합니다.','warn'); return; }
+  syncDownloadState();
+  $('#modalBack').classList.add('show');
+  await generatePreview();
+}
+
+/* 미리보기 이미지 생성 (지우개용 분리 렌더링) */
+async function generatePreview(){
+  const box = $('#previewBox');
+  box.innerHTML = `<div class="ph">미리보기를 생성하는 중…</div>`;
+  box.classList.remove('eraser-mode');
+  eraser.active = false;
+  eraser.points = [];
+  eraser.undoStack = [];
+  updateEraserUI();
+  $('#busyText').textContent = '이미지 생성 중…';
+  $('#busyOverlay').classList.add('show');
+
+  try{
+    if (state.download.method === 'static'){
+      const url = buildStaticUrl();
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = ()=>{
+        box.innerHTML = '';
+        const el = new Image(); el.src = url; box.appendChild(el);
+        previewCanvas = { type:'static', url };
+        $('#eraserToolbar').style.display = 'none';
+        fillPreviewInfo();
+        $('#busyOverlay').classList.remove('show');
+      };
+      img.onerror = ()=>{
+        box.innerHTML = `<div class="ph" style="color:var(--danger)">Static API 실패. '브라우저 캡처' 방식을 사용하세요.</div>`;
+        $('#busyOverlay').classList.remove('show');
+      };
+      img.src = url;
+    } else {
+      // 브라우저 캡처 — 베이스와 오버레이를 분리 렌더링
+      const result = await buildCanvasWithSeparateOverlays();
+      eraser.baseCanvas = result.base;
+      eraser.points = result.points;
+      eraser.dpr = result.dpr;
+      eraser.outW = result.base.width;
+      eraser.outH = result.base.height;
+
+      // 합성 캔버스 생성 (베이스 + 오버레이 점)
+      const composite = compositeCanvas();
+      previewCanvas = { type:'canvas', canvas: composite };
+
+      // 캔버스를 직접 표시 (img 아닌 canvas → 클릭 가능)
+      box.innerHTML = '';
+      const displayCanvas = document.createElement('canvas');
+      displayCanvas.width = composite.width;
+      displayCanvas.height = composite.height;
+      displayCanvas.getContext('2d').drawImage(composite, 0, 0);
+      displayCanvas.id = 'previewCanvas';
+      box.appendChild(displayCanvas);
+
+      // 지우개 클릭 이벤트
+      displayCanvas.addEventListener('click', onPreviewCanvasClick);
+
+      $('#eraserToolbar').style.display = 'flex';
+      fillPreviewInfo();
+      $('#busyOverlay').classList.remove('show');
+    }
+  }catch(e){
+    console.error(e);
+    box.innerHTML = `<div class="ph" style="color:var(--danger)">이미지 생성 실패: ${e.message}</div>`;
+    $('#busyOverlay').classList.remove('show');
+  }
+}
+
+/* 베이스 캔버스(지도+반경+마커) + 오버레이 점 목록을 분리 생성 */
+async function buildCanvasWithSeparateOverlays(){
+  const srcMap = state.map;
+  const [baseW, baseH] = getDownloadSize();
+  const scale = getDownloadScale();
+
+  // ─────────────────────────────────────────────────────────────
+  // 화면 시야 그대로 캡처되도록 줌 자동 조정
+  // 큰 캔버스에서 같은 zoom 을 쓰면 더 넓은 영역이 잡혀서
+  // 결과 이미지가 너무 축소되어 보입니다. 캔버스 크기에 맞춰
+  // zoom 을 올려서 화면의 영역만 캡처되도록 합니다.
+  // ─────────────────────────────────────────────────────────────
+  const srcCanvasEl = srcMap.getCanvas();
+  const srcW = srcCanvasEl.clientWidth  || srcCanvasEl.width;
+  const srcH = srcCanvasEl.clientHeight || srcCanvasEl.height;
+  // 두 방향(가로·세로) 줌 조정값 중 작은 값을 사용 → 화면의 시야 전체가 보장됨
+  const zoomDelta = Math.min(
+    Math.log2(baseW / srcW),
+    Math.log2(baseH / srcH)
+  );
+  // 0 이하이면 줌 변경 없음 (캔버스가 화면보다 작거나 같은 경우)
+  const adjustedZoom = srcMap.getZoom() + Math.max(0, zoomDelta);
+
+  const holder = document.createElement('div');
+  holder.style.cssText = `position:fixed;left:-99999px;top:0;width:${baseW}px;height:${baseH}px;`;
+  document.body.appendChild(holder);
+
+  const currentStyleUrl = state.isSatellite
+    ? `https://api.maptiler.com/maps/hybrid/style.json?key=${API_KEY}`
+    : CUSTOM_STYLE_URL;
+
+  const tmpMap = new maptilersdk.Map({
+    container: holder, style: currentStyleUrl,
+    center: srcMap.getCenter(), zoom: adjustedZoom,
+    bearing: srcMap.getBearing(), pitch: srcMap.getPitch(),
+    pixelRatio: scale, interactive: false,
+    attributionControl: false, preserveDrawingBuffer: true
+  });
+
+  await new Promise(res=>{ tmpMap.once('load', res); setTimeout(res, 12000); });
+
+  copyLayerVisibility(srcMap, tmpMap);
+  copyPaintColors(srcMap, tmpMap);
+  drawRadiusOnMap(tmpMap);
+  // ※ drawOverlaysOnMap은 호출하지 않음 — 오버레이 점은 수동으로 그릴 예정
+
+  await new Promise(res=>{ tmpMap.once('idle', res); setTimeout(res, 3000); });
+
+  // 베이스 캔버스 캡처 (오버레이 점 없이)
+  const srcCanvas = tmpMap.getCanvas();
+  const base = document.createElement('canvas');
+  base.width = srcCanvas.width; base.height = srcCanvas.height;
+  const baseCtx = base.getContext('2d');
+  baseCtx.fillStyle = '#ffffff';
+  baseCtx.fillRect(0, 0, base.width, base.height);
+  baseCtx.drawImage(srcCanvas, 0, 0, base.width, base.height);
+
+  const dpr = base.width / baseW;
+
+  // 마커를 베이스에 직접 그림
+  if (state.download.scope !== 'map'){
+    state.markers.forEach(m=>{
+      const p = tmpMap.project([m.lng, m.lat]);
+      drawPin(baseCtx, p.x*dpr, p.y*dpr, m.color, m.name, dpr);
+    });
+  }
+  if (state.download.scope === 'info') drawInfoCard(baseCtx, dpr);
+  if (state.download.copyright) drawCopyright(baseCtx, base.width, base.height, dpr);
+
+  // 오버레이 점 위치 수집 (메인 맵에서 쿼리)
+  const points = collectOverlayPoints(tmpMap, dpr);
+
+  tmpMap.remove();
+  holder.remove();
+
+  return { base, points, dpr };
+}
+
+/* 메인 맵에서 오버레이 피처를 쿼리하고 캔버스 좌표로 변환 */
+function collectOverlayPoints(tmpMap, dpr){
+  const points = [];
+  const omtSrc = findOmtSource();
+  if (!omtSrc) return points;
+
+  let features = [];
+  try { features = state.map.querySourceFeatures(omtSrc, { sourceLayer:'poi' }); }
+  catch(e){ return points; }
+
+  const inc = {
+    station:  $('#dlStation').checked,
+    bus:      $('#dlBus').checked,
+    hospital: $('#dlHospital').checked,
+    school:   $('#dlSchool').checked,
+    shop:     $('#dlShop').checked
+  };
+
+  const cats = [
+    { key:'station',  subs:['subway','station','railway','halt','tram_stop','ferry_terminal'],
+      color:OVERLAY_STYLE.station.dotColor, labelColor:OVERLAY_STYLE.station.labelColor, r:5, showLabel:OVERLAY_STYLE.showStationLabel },
+    { key:'bus',      subs:['bus_stop','bus_station'],
+      color:OVERLAY_STYLE.bus.dotColor, labelColor:null, r:3.5, showLabel:false },
+    { key:'hospital', subs:['hospital','clinic','doctors'],
+      color:OVERLAY_STYLE.hospital.dotColor, labelColor:OVERLAY_STYLE.hospital.labelColor, r:4, showLabel:true },
+    { key:'school',   subs:['school','kindergarten','college','university'],
+      color:OVERLAY_STYLE.school.dotColor, labelColor:OVERLAY_STYLE.school.labelColor, r:4, showLabel:true },
+    { key:'shop',     subs:['department_store','supermarket','mall','marketplace','furniture','convention_centre'],
+      color:OVERLAY_STYLE.shop.dotColor, labelColor:OVERLAY_STYLE.shop.labelColor, r:4, showLabel:true }
+  ];
+
+  const seen = new Set();
+  features.forEach(feat=>{
+    const props = feat.properties || {};
+    const subclass = props.subclass || '';
+    const geom = feat.geometry;
+    if (!geom || geom.type !== 'Point') return;
+
+    const cat = cats.find(c=> c.subs.includes(subclass));
+    if (!cat || !inc[cat.key]) return;
+
+    const coords = geom.coordinates;
+    const dedupKey = coords[0].toFixed(5)+'_'+coords[1].toFixed(5)+'_'+cat.key;
+    if (seen.has(dedupKey)) return;
+    seen.add(dedupKey);
+
+    try{
+      const p = tmpMap.project(coords);
+      const name = props['name:ko'] || props.name || '';
+      points.push({
+        type: cat.key, name,
+        cx: p.x * dpr, cy: p.y * dpr,
+        color: cat.color, labelColor: cat.labelColor,
+        radius: cat.r * dpr * dotSizeMultiplier(OVERLAY_STYLE.dotSize), showLabel: cat.showLabel && !!name,
+        removed: false
+      });
+    }catch(e){}
+  });
+  return points;
+}
+
+/* 베이스 + 남은 오버레이 점을 합성한 최종 캔버스 반환 */
+function compositeCanvas(){
+  const out = document.createElement('canvas');
+  out.width = eraser.baseCanvas.width;
+  out.height = eraser.baseCanvas.height;
+  const ctx = out.getContext('2d');
+  // 베이스 복사
+  ctx.drawImage(eraser.baseCanvas, 0, 0);
+  // 살아있는 오버레이 점만 그리기
+  eraser.points.forEach(pt=>{
+    if (pt.removed) return;
+    // 점 (원)
+    ctx.beginPath();
+    ctx.arc(pt.cx, pt.cy, pt.radius, 0, Math.PI*2);
+    ctx.fillStyle = pt.color; ctx.fill();
+    ctx.lineWidth = 1.5 * (eraser.dpr || 1);
+    ctx.strokeStyle = '#ffffff'; ctx.stroke();
+    // 라벨
+    if (pt.showLabel && pt.name){
+      const fs = 10 * (eraser.dpr || 1);
+      ctx.font = `600 ${fs}px Pretendard, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      // 라벨 배경 (흰색 후광)
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3 * (eraser.dpr || 1);
+      ctx.strokeText(pt.name, pt.cx, pt.cy + pt.radius + 2*(eraser.dpr||1));
+      ctx.fillStyle = pt.labelColor || pt.color;
+      ctx.fillText(pt.name, pt.cx, pt.cy + pt.radius + 2*(eraser.dpr||1));
+    }
+  });
+  return out;
+}
+
+/* 미리보기 캔버스 다시 그리기 (지우개/되돌리기 후) */
+function refreshPreviewCanvas(){
+  const composite = compositeCanvas();
+  previewCanvas = { type:'canvas', canvas: composite };
+  const displayCanvas = $('#previewCanvas');
+  if (displayCanvas){
+    const ctx = displayCanvas.getContext('2d');
+    ctx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
+    ctx.drawImage(composite, 0, 0);
+  }
+  updateEraserUI();
+}
+
+/* 미리보기 캔버스 클릭 → 가장 가까운 점 찾아 지우기 */
+function onPreviewCanvasClick(e){
+  if (!eraser.active) return;
+  const canvas = e.target;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const mx = (e.clientX - rect.left) * scaleX;
+  const my = (e.clientY - rect.top) * scaleY;
+
+  // 클릭 반경 내 가장 가까운 살아있는 점 찾기
+  const hitRadius = 25 * (eraser.dpr || 1);
+  let nearest = null, nearDist = Infinity;
+  eraser.points.forEach((pt, idx)=>{
+    if (pt.removed) return;
+    const d = Math.sqrt((pt.cx-mx)**2 + (pt.cy-my)**2);
+    if (d < hitRadius && d < nearDist){
+      nearDist = d; nearest = idx;
+    }
+  });
+
+  if (nearest !== null){
+    eraser.points[nearest].removed = true;
+    eraser.undoStack.push(nearest);
+    refreshPreviewCanvas();
+    notify('점 제거', `"${eraser.points[nearest].name || '이름없음'}" 을(를) 제거했습니다.`, 'ok');
+  }
+}
+
+/* 되돌리기 (마지막으로 지운 점 복원) */
+function undoLastErase(){
+  if (!eraser.undoStack.length) return;
+  const idx = eraser.undoStack.pop();
+  eraser.points[idx].removed = false;
+  refreshPreviewCanvas();
+  notify('되돌리기', `"${eraser.points[idx].name || '이름없음'}" 을(를) 복원했습니다.`, 'ok');
+}
+
+/* 전체 되돌리기 */
+function undoAllErase(){
+  eraser.points.forEach(pt=> pt.removed = false);
+  eraser.undoStack = [];
+  refreshPreviewCanvas();
+  notify('전체 복원', '모든 점을 복원했습니다.', 'ok');
+}
+
+/* 지우개 모드 토글 */
+function toggleEraserMode(){
+  eraser.active = !eraser.active;
+  const box = $('#previewBox');
+  box.classList.toggle('eraser-mode', eraser.active);
+  updateEraserUI();
+}
+
+/* 지우개 UI 상태 갱신 */
+function updateEraserUI(){
+  const btn = $('#btnEraserMode');
+  if (btn) btn.textContent = eraser.active ? '🧹 지우기 모드 ON' : '🧹 점 지우기 모드';
+  if (btn) btn.style.background = eraser.active ? 'var(--accent)' : '';
+  if (btn) btn.style.color = eraser.active ? '#fff' : '';
+  const undoBtn = $('#btnUndoErase');
+  const undoAllBtn = $('#btnUndoAll');
+  if (undoBtn) undoBtn.disabled = !eraser.undoStack.length;
+  if (undoAllBtn) undoAllBtn.disabled = !eraser.undoStack.length;
+  const status = $('#eraserStatus');
+  const removedCount = eraser.points.filter(p=>p.removed).length;
+  if (status) status.textContent = removedCount ? `${removedCount}개 제거됨` : '';
+}
+
+/* 미리보기 정보표 채우기 */
+function fillPreviewInfo(){
+  const [bw,bh] = getDownloadSize();
+  const [fw,fh] = getFinalSize();
+  const scale = getDownloadScale();
+  // 포함된 오버레이 목록
+  const ovls = [];
+  if ($('#dlStation').checked) ovls.push('🚇역');
+  if ($('#dlBus').checked)     ovls.push('🚌버스');
+  if ($('#dlHospital').checked)ovls.push('🏥병원');
+  if ($('#dlSchool').checked)  ovls.push('🏫학교');
+  if ($('#dlShop').checked)    ovls.push('🏬판매시설');
+  const ovlText = ovls.length ? ovls.join(' ') : '없음';
+  $('#previewInfo').innerHTML = `
+    <tr><td>저장 방식</td><td>${state.download.method==='static'?'Static API':'브라우저 캡처'}</td></tr>
+    <tr><td>기준 크기</td><td>${bw} × ${bh} px</td></tr>
+    <tr><td>화질 배율</td><td>${scale}배</td></tr>
+    <tr><td>실제 저장 크기</td><td><b>${fw} × ${fh} px</b></td></tr>
+    <tr><td>저장 범위</td><td>${scopeLabel(state.download.scope)}</td></tr>
+    <tr><td>포함 점 정보</td><td>${ovlText}</td></tr>
+    <tr><td>파일 형식</td><td>${state.download.format.toUpperCase()}</td></tr>
+    <tr><td>파일명</td><td>${buildFilename()}</td></tr>`;
+}
+
+/* 파일명 자동 생성 */
+function buildFilename(){
+  const base = ($('#dlFilename').value || 'site-analysis-map').trim();
+  const [w,h] = getFinalSize();          // 실제 저장 크기를 파일명에 표기
+  const today = new Date().toISOString().slice(0,10);
+  let radiusPart = '';
+  if (state.radiusRings.length){
+    radiusPart = '_' + fmtRadius(state.radiusRings[state.radiusRings.length-1].radiusKm);
+  }
+  return `${base}${radiusPart}_${w}x${h}_${today}.${state.download.format==='jpg'?'jpg':'png'}`;
+}
+
+/* 실제 파일 다운로드 실행 */
+async function doDownload(){
+  if (!previewCanvas){ notify('안내','먼저 미리보기를 생성하세요.','warn'); return; }
+  const filename = buildFilename();
+
+  try{
+    if (previewCanvas.type === 'static'){
+      // Static API : 이미지 URL을 받아 다운로드
+      $('#busyText').textContent='이미지 내려받는 중…';
+      $('#busyOverlay').classList.add('show');
+      try{
+        const resp = await fetch(previewCanvas.url);
+        if (!resp.ok) throw new Error('HTTP '+resp.status);
+        const blob = await resp.blob();
+        triggerDownload(URL.createObjectURL(blob), filename);
+      }catch(err){
+        // CORS 등으로 직접 저장 실패 시 새 탭으로 열어 우클릭 저장 안내
+        window.open(previewCanvas.url, '_blank');
+        notify('수동 저장 안내',
+          '브라우저 정책으로 자동 저장이 막혔습니다. 새 탭에서 이미지를 우클릭해 저장하세요.','warn');
+      }
+      $('#busyOverlay').classList.remove('show');
+    } else {
+      // 캔버스 : 즉시 파일 변환
+      const mime = state.download.format==='jpg' ? 'image/jpeg' : 'image/png';
+      previewCanvas.canvas.toBlob((blob)=>{
+        if (!blob){ notify('저장 실패','이미지 변환에 실패했습니다.','err'); return; }
+        triggerDownload(URL.createObjectURL(blob), filename);
+        notify('다운로드 완료', filename, 'ok');
+      }, mime, 0.95);
+    }
+    $('#modalBack').classList.remove('show');
+  }catch(e){
+    console.error(e);
+    notify('다운로드 실패', e.message, 'err');
+  }
+}
+function triggerDownload(url, filename){
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+/* 다운로드 설정값을 state에 동기화 */
+function syncDownloadState(){
+  state.download.scope = $('#dlScope').value;
+  state.download.size = $('#dlSize').value;
+  state.download.method = $('#dlMethod').value;
+  state.download.copyright = $('#dlCopyright').checked;
+  state.download.scale = getDownloadScale();
+  // '실제 저장 크기' 안내문 갱신
+  const [fw,fh] = getFinalSize();
+  const sizeNote = $('#dlFinalSizeNote');
+  if (sizeNote) sizeNote.textContent = `실제 저장 크기: ${fw} × ${fh} px`;
+  updateStatusBar(); updateInfoTable();
+}
+
+/* ===========================================================================
+   [12] 지도 클릭/이동 이벤트 연결
+   =========================================================================== */
+function bindMapEvents(){
+  const map = state.map;
+
+  // 지도 클릭 - 현재 모드에 따라 동작
+  map.on('click', (e)=>{
+    const { lng, lat } = e.lngLat;
+    if (state.clickMode === 'marker'){
+      addMarker(lng, lat);
+    } else if (state.clickMode === 'center'){
+      setCenter(lng, lat);
+      notify('중심점 지정', '클릭한 위치를 반경 중심으로 지정했습니다.', 'ok');
+    }
+    // 'move' 모드는 아무 동작 안 함(지도 이동만)
+  });
+
+  // 지도 이동/줌 - 상태바 갱신
+  map.on('move', ()=> updateStatusBar());
+  map.on('moveend', ()=>{ updateStatusBar(); updateInfoTable(); });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   카카오 로드뷰 시스템
+   ───────────────────────────────────────────────────────────────
+   메인 영역: 로드뷰 (큰 화면)
+   우상단 미니맵: 현재 위치 + 방향 표시
+   미니맵 클릭 → 그 위치로 로드뷰 이동
+   ═══════════════════════════════════════════════════════════════ */
+
+const RV = {
+  rv: null,           // kakao.maps.Roadview 객체
+  client: null,       // kakao.maps.RoadviewClient
+  miniMap: null,      // 미니맵 (카카오)
+  marker: null,       // 미니맵 위치 마커
+  cone: null,         // 미니맵 시선 방향 표시
+  opened: false
+};
+
+/* 로드뷰 열기 — 주 진입점 */
+function openRoadview(lng, lat, title){
+  if (!state.kakaoReady || !window.kakao || !kakao.maps || !kakao.maps.Roadview){
+    notify('로드뷰 미사용','카카오 SDK가 아직 준비되지 않았습니다. 잠시 후 다시 시도하세요.','warn');
+    return;
+  }
+  $('#rvTitle').textContent = title ? '· ' + title : '';
+  $('#rvNoData').style.display = 'none';
+  $('#roadviewModalBack').classList.add('show');
+
+  setTimeout(()=>{ initRoadview(lng, lat); }, 50);
+}
+
+/* 로드뷰 초기화 */
+function initRoadview(lng, lat){
+  const container = document.getElementById('rvContainer');
+  container.innerHTML = '';
+  const miniContainer = document.getElementById('rvMiniMap');
+  miniContainer.innerHTML = '';
+
+  RV.rv = new kakao.maps.Roadview(container);
+  RV.client = new kakao.maps.RoadviewClient();
+
+  RV.miniMap = new kakao.maps.Map(miniContainer, {
+    center: new kakao.maps.LatLng(lat, lng),
+    level: 3,
+    draggable: true
+  });
+
+  const markerSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="9" fill="#2563eb" stroke="#fff" stroke-width="3"/></svg>';
+  const markerImage = new kakao.maps.MarkerImage(
+    'data:image/svg+xml;base64,' + btoa(markerSvg),
+    new kakao.maps.Size(22, 22),
+    { offset: new kakao.maps.Point(11, 11) }
+  );
+  RV.marker = new kakao.maps.Marker({
+    position: new kakao.maps.LatLng(lat, lng),
+    image: markerImage,
+    map: RV.miniMap
+  });
+
+  const coords = new kakao.maps.LatLng(lat, lng);
+  RV.client.getNearestPanoId(coords, 80, (panoId)=>{
+    if (panoId === null){
+      $('#rvNoData').style.display = 'block';
+    } else {
+      $('#rvNoData').style.display = 'none';
+      RV.rv.setPanoId(panoId, coords);
+    }
+  });
+
+  // 시점 변경 → 미니맵 방향 콘 업데이트
+  kakao.maps.event.addListener(RV.rv, 'viewpoint_changed', updateMiniCone);
+
+  // 위치 변경 → 미니맵 마커 이동
+  kakao.maps.event.addListener(RV.rv, 'position_changed', ()=>{
+    const pos = RV.rv.getPosition();
+    RV.marker.setPosition(pos);
+    RV.miniMap.panTo(pos);
+    updateMiniCone();
+  });
+
+  // 미니맵 클릭 → 그 위치로 로드뷰 이동
+  kakao.maps.event.addListener(RV.miniMap, 'click', (mouseEvent)=>{
+    const latlng = mouseEvent.latLng;
+    RV.client.getNearestPanoId(latlng, 80, (panoId)=>{
+      if (panoId === null){
+        $('#rvNoData').style.display = 'block';
+        notify('로드뷰 없음','이 위치는 로드뷰가 없습니다.','warn');
+      } else {
+        $('#rvNoData').style.display = 'none';
+        RV.rv.setPanoId(panoId, latlng);
+        RV.marker.setPosition(latlng);
+      }
+    });
+  });
+
+  RV.opened = true;
+
+  setTimeout(()=>{
+    if (RV.rv) RV.rv.relayout();
+    if (RV.miniMap) RV.miniMap.relayout();
+  }, 300);
+
+  // 헤더 드래그로 창 이동
+  setupRoadviewDrag();
+  // 창 크기 조절 시 로드뷰 자동 재배치
+  setupRoadviewResize();
+}
+
+/* 헤더 잡고 드래그하여 창 이동 */
+function setupRoadviewDrag(){
+  const modal = document.getElementById('rvModal');
+  const head = document.getElementById('rvHead');
+  if (!modal || !head) return;
+
+  let isDragging = false;
+  let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+  head.onmousedown = (e)=>{
+    // X 버튼 클릭은 드래그 안 함
+    if (e.target.id === 'rvClose') return;
+    isDragging = true;
+    startX = e.clientX; startY = e.clientY;
+    const rect = modal.getBoundingClientRect();
+    // 모달을 좌표 기반으로 전환
+    modal.style.position = 'fixed';
+    modal.style.left = rect.left + 'px';
+    modal.style.top  = rect.top  + 'px';
+    modal.style.margin = '0';
+    startLeft = rect.left; startTop = rect.top;
+    document.body.style.userSelect = 'none';
+  };
+
+  document.addEventListener('mousemove', (e)=>{
+    if (!isDragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    let nx = startLeft + dx;
+    let ny = startTop + dy;
+    // 화면 밖으로 너무 나가지 않게
+    nx = Math.max(-modal.offsetWidth + 100, Math.min(window.innerWidth - 100, nx));
+    ny = Math.max(0, Math.min(window.innerHeight - 60, ny));
+    modal.style.left = nx + 'px';
+    modal.style.top  = ny + 'px';
+  });
+
+  document.addEventListener('mouseup', ()=>{
+    if (isDragging){
+      isDragging = false;
+      document.body.style.userSelect = '';
+    }
+  });
+}
+
+/* 창 크기 조절 시 로드뷰 자동 재배치 (ResizeObserver) */
+function setupRoadviewResize(){
+  const modal = document.getElementById('rvModal');
+  if (!modal || !window.ResizeObserver) return;
+  if (RV._resizeObs) RV._resizeObs.disconnect();
+  RV._resizeObs = new ResizeObserver(()=>{
+    if (RV.rv) RV.rv.relayout();
+    if (RV.miniMap) RV.miniMap.relayout();
+  });
+  RV._resizeObs.observe(modal);
+}
+
+/* 미니맵에 로드뷰 방향(시선) 콘 그리기 */
+function updateMiniCone(){
+  if (!RV.rv || !RV.miniMap) return;
+  const vp = RV.rv.getViewpoint();
+  const pos = RV.rv.getPosition();
+
+  if (RV.cone){ RV.cone.setMap(null); RV.cone = null; }
+
+  const lat = pos.getLat();
+  const lng = pos.getLng();
+  const pan = vp.pan * Math.PI / 180;
+  const half = 40 * Math.PI / 180;
+  const radius = 0.0003;
+
+  const path = [
+    new kakao.maps.LatLng(lat, lng),
+    new kakao.maps.LatLng(
+      lat + radius * Math.cos(pan - half),
+      lng + radius * Math.sin(pan - half) / Math.cos(lat * Math.PI / 180)
+    ),
+    new kakao.maps.LatLng(
+      lat + radius * Math.cos(pan),
+      lng + radius * Math.sin(pan) / Math.cos(lat * Math.PI / 180)
+    ),
+    new kakao.maps.LatLng(
+      lat + radius * Math.cos(pan + half),
+      lng + radius * Math.sin(pan + half) / Math.cos(lat * Math.PI / 180)
+    ),
+    new kakao.maps.LatLng(lat, lng)
+  ];
+
+  RV.cone = new kakao.maps.Polygon({
+    map: RV.miniMap, path,
+    strokeWeight: 1, strokeColor: '#2563eb', strokeOpacity: 0.8,
+    fillColor: '#3b82f6', fillOpacity: 0.35
+  });
+}
+
+/* 로드뷰 닫기 */
+function closeRoadview(){
+  $('#roadviewModalBack').classList.remove('show');
+  RV.opened = false;
+  if (RV.cone){ RV.cone.setMap(null); RV.cone = null; }
+  if (RV.marker){ RV.marker.setMap(null); RV.marker = null; }
+  RV.rv = null;
+  RV.client = null;
+  RV.miniMap = null;
+  // 리사이즈 옵저버 해제
+  if (RV._resizeObs){ RV._resizeObs.disconnect(); RV._resizeObs = null; }
+  // 다음에 열 때 다시 초기 위치/크기로 — 인라인 스타일 제거
+  const modal = document.getElementById('rvModal');
+  if (modal){
+    modal.style.position = '';
+    modal.style.left = ''; modal.style.top = '';
+    modal.style.width = ''; modal.style.height = '';
+    modal.style.margin = '';
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   VWorld 3D 건물 보기 시스템
+   ───────────────────────────────────────────────────────────────
+   · 기존 2D 지도는 그대로 유지됨
+   · VWorld SDK는 사용자가 3D 버튼을 처음 누를 때 동적으로 로드
+   · 한 번 만들어진 3D 지도 객체는 이후 재사용
+   · VWorld Cesium 기반 WebGL 3D 지도 사용
+   ═══════════════════════════════════════════════════════════════ */
+
+const VW3D = {
+  sdkLoaded: false,    // 스크립트 로드 완료 여부
+  sdkLoading: false,   // 로드 중인지 (중복 방지)
+  initialized: false,  // 3D Map 인스턴스 생성 완료 여부
+  map: null,           // VWorld 3D Map 객체 (vw.ws3dMap)
+  lastLng: null,       // 마지막으로 본 좌표
+  lastLat: null,
+  lastTitle: ''        // 마지막으로 본 위치 이름
+};
+
+/* VWorld SDK 동적 로드 (최초 1회만 실행) */
+function loadVWorldSDK(){
+  if (VW3D.sdkLoaded) return Promise.resolve(true);
+  if (VW3D.sdkLoading){
+    // 이미 로딩 중이면 완료될 때까지 대기
+    return new Promise((resolve, reject)=>{
+      const timer = setInterval(()=>{
+        if (VW3D.sdkLoaded){ clearInterval(timer); resolve(true); }
+      }, 200);
+      setTimeout(()=>{ clearInterval(timer); reject(new Error('SDK 로드 시간 초과')); }, 30000);
+    });
+  }
+  VW3D.sdkLoading = true;
+
+  return new Promise((resolve, reject)=>{
+    const script = document.createElement('script');
+    script.src = `https://map.vworld.kr/js/webglMapInit.js.do?version=3.0&apiKey=${VWORLD_API_KEY}&domain=${window.location.hostname}`;
+    script.async = true;
+    script.onload = ()=>{
+      VW3D.sdkLoaded = true;
+      VW3D.sdkLoading = false;
+      console.log('[VWorld] 3D SDK 로딩 완료');
+      // vw 객체가 준비될 때까지 잠시 대기
+      setTimeout(()=>resolve(true), 300);
+    };
+    script.onerror = (e)=>{
+      VW3D.sdkLoading = false;
+      console.error('[VWorld] SDK 로딩 실패:', e);
+      reject(new Error('VWorld SDK 로딩 실패'));
+    };
+    document.head.appendChild(script);
+  });
+}
+
+/* VWorld 3D Map 초기화 (최초 1회만 실행) */
+function initVWorld3DMap(lng, lat){
+  try {
+    if (typeof vw === 'undefined' || !vw.MapControllerOption){
+      throw new Error('vw 객체가 준비되지 않았습니다. SDK 로딩 확인 필요.');
+    }
+
+    // VWorld 3D Map 옵션 (공식 가이드 기준)
+    vw.MapControllerOption = {
+      container: "vmap",
+      mapMode: "3d-map",
+      basemapType: vw.BasemapType.GRAPHIC,
+      controlDensity: vw.DensityType.EMPTY,
+      interactionDensity: vw.DensityType.BASIC,
+      controlsAutoArrange: true,
+      homePosition: vw.CameraPosition,
+      initPosition: new vw.CameraPosition(
+        new vw.CoordZ(lng, lat, 1500),     // 고도 1500m
+        new vw.Direction(0, -45, 0)         // heading 0, pitch -45° (조감도)
+      )
+    };
+
+    vw.ws3dMap = new vw.MapController(vw.MapControllerOption);
+    VW3D.map = vw.ws3dMap;
+    VW3D.initialized = true;
+    console.log('[VWorld] 3D 지도 초기화 완료');
+    return true;
+  } catch(e) {
+    console.error('[VWorld] 3D 지도 초기화 오류:', e);
+    return false;
+  }
+}
+
+/* 3D 지도 카메라를 특정 좌표로 이동 */
+function flyTo3D(lng, lat){
+  if (!VW3D.initialized || !VW3D.map) return false;
+  try {
+    // 방법 1: VWorld API의 moveTo 사용 시도
+    if (typeof vw !== 'undefined' && vw.CameraPosition && vw.CoordZ){
+      const newPos = new vw.CameraPosition(
+        new vw.CoordZ(lng, lat, 1500),
+        new vw.Direction(0, -45, 0)
+      );
+      if (VW3D.map.moveTo){
+        VW3D.map.moveTo(newPos);
+        return true;
+      }
+    }
+    // 방법 2: Cesium viewer 직접 사용 (VWorld 내부에 Cesium이 있음)
+    if (window.Cesium && VW3D.map.viewer){
+      VW3D.map.viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(lng, lat, 1500),
+        orientation: {
+          heading: Cesium.Math.toRadians(0),
+          pitch: Cesium.Math.toRadians(-45),
+          roll: 0
+        },
+        duration: 1.5
+      });
+      return true;
+    }
+  } catch(e){ console.error('[VWorld] flyTo 오류:', e); }
+  return false;
+}
+
+/* 카메라 초기 위치로 리셋 */
+function reset3DCamera(){
+  if (VW3D.lastLng != null && VW3D.lastLat != null){
+    flyTo3D(VW3D.lastLng, VW3D.lastLat);
+  } else {
+    notify('카메라 초기화', '아직 이동한 위치가 없습니다.', 'warn');
+  }
+}
+
+/* 3D 지도를 열고 특정 좌표로 이동 (주 진입점) */
+async function open3DAt(lng, lat, title){
+  // 좌표 유효성 검사
+  if (typeof lng !== 'number' || typeof lat !== 'number'){
+    notify('좌표 오류', '유효한 좌표를 찾을 수 없습니다.', 'warn');
+    return;
+  }
+  VW3D.lastLng = lng;
+  VW3D.lastLat = lat;
+  VW3D.lastTitle = title || '';
+
+  $('#vw3dTitle').textContent = title ? '· ' + title : '';
+  $('#vw3dError').style.display = 'none';
+  $('#vw3dLoading').style.display = 'block';
+  $('#vworld3dModalBack').classList.add('show');
+
+  try {
+    // 1) SDK 로드
+    await loadVWorldSDK();
+
+    // 2) 3D 지도 초기화 (최초 1회) 또는 카메라 이동
+    if (!VW3D.initialized){
+      // 컨테이너가 visible 상태가 되도록 약간 대기 후 초기화
+      await new Promise(r=>setTimeout(r, 400));
+      const ok = initVWorld3DMap(lng, lat);
+      if (!ok) throw new Error('3D 지도 초기화 실패');
+      // 초기화 후 약간 대기 (Cesium 로딩)
+      await new Promise(r=>setTimeout(r, 1500));
+    } else {
+      // 이미 초기화돼 있으면 카메라만 이동
+      flyTo3D(lng, lat);
+    }
+
+    $('#vw3dLoading').style.display = 'none';
+    notify('VWorld 3D 보기', title ? title + ' 위치를 표시합니다.' : '3D 지도를 표시합니다.', 'ok');
+  } catch(e) {
+    console.error('VWorld 3D load error:', e);
+    $('#vw3dLoading').style.display = 'none';
+    $('#vw3dError').style.display = 'block';
+  }
+}
+
+/* 선택된 마커 위치로 3D 보기 */
+function open3DForSelectedMarker(){
+  if (!state.selectedMarkerId){
+    notify('마커 선택 필요', '선택된 마커가 없습니다. 먼저 지도에서 마커를 선택해주세요.', 'warn');
+    return;
+  }
+  const m = state.markers.find(mk => mk.id === state.selectedMarkerId);
+  if (!m){
+    notify('마커 오류', '선택한 마커 정보를 찾을 수 없습니다.', 'warn');
+    return;
+  }
+  open3DAt(m.lng, m.lat, m.name || '선택한 마커');
+}
+
+/* 현재 2D 지도 중심으로 3D 보기 */
+function open3DForMapCenter(){
+  if (!state.map){ notify('지도 준비 중', '지도가 아직 준비되지 않았습니다.', 'warn'); return; }
+  const c = state.map.getCenter();
+  open3DAt(c.lng, c.lat, '지도 중심');
+}
+
+/* 3D 화면을 PNG로 저장 시도
+   ※ VWorld 3D 캔버스가 CORS 정책으로 캡처가 막힐 수 있습니다. */
+function capture3DScreen(){
+  if (!VW3D.initialized){
+    notify('3D 캡처', '3D 지도가 아직 준비되지 않았습니다.', 'warn');
+    return;
+  }
+  try {
+    // Cesium viewer의 canvas를 찾기
+    const container = document.getElementById('vmap');
+    const canvas = container.querySelector('canvas');
+    if (!canvas){ throw new Error('3D 캔버스를 찾을 수 없습니다.'); }
+
+    // Cesium 캔버스는 preserveDrawingBuffer가 기본 false라서 빈 이미지가 나올 수 있음
+    // VWorld API가 강제로 true로 설정해주지 않으면 캡처가 안 됨
+    canvas.toBlob((blob)=>{
+      if (!blob){
+        notify('캡처 실패', '브라우저 보안 정책 때문에 3D 화면을 캡처할 수 없습니다. 화면 캡처 도구를 사용하세요.', 'warn');
+        return;
+      }
+      const link = document.createElement('a');
+      link.download = `3d_${VW3D.lastTitle || 'capture'}_${Date.now()}.png`;
+      link.href = URL.createObjectURL(blob);
+      link.click();
+      notify('3D 화면 저장', 'PNG 파일로 저장했습니다.', 'ok');
+    }, 'image/png');
+  } catch(e){
+    console.error('[VWorld] 3D 캡처 오류:', e);
+    notify('캡처 실패', '3D 화면 캡처에 실패했습니다. (스크린샷 도구 사용 권장)', 'warn');
+  }
+}
+
+/* 3D 모달 닫기 */
+function close3DModal(){
+  $('#vworld3dModalBack').classList.remove('show');
+  // ※ VWorld 3D 지도 객체는 destroy하지 않음 — 다시 열 때 재사용
+}
+
+/* ===========================================================================
+   [입지 분석] 중심점 기준으로 주변 시설을 자동 집계하고 분석합니다.
+   =========================================================================== */
+
+/* POI 카테고리 정의 */
+const ANALYSIS_CATEGORIES = [
+  { key:'station',  label:'🚇 지하철/기차역', subclasses:['subway','station','railway','halt','tram_stop','ferry_terminal'] },
+  { key:'bus',      label:'🚌 버스정류장',    subclasses:['bus_stop','bus_station'] },
+  { key:'hospital', label:'🏥 병원',          subclasses:['hospital','clinic','doctors'] },
+  { key:'school',   label:'🏫 학교',          subclasses:['school','kindergarten','college','university'] },
+  { key:'shop',     label:'🏬 판매시설',       subclasses:['department_store','supermarket','mall','marketplace','furniture','convention_centre'] },
+];
+
+/* 분석 실행 */
+function runAnalysis(){
+  if (!state.center){
+    notify('중심점 없음','먼저 반경 중심점을 지정하세요.','warn'); return;
+  }
+  if (!state.radiusRings.length){
+    notify('반경 없음','반경을 먼저 생성하세요.','warn'); return;
+  }
+
+  const map = state.map;
+  const center = [state.center.lng, state.center.lat];
+  const maxKm = state.radiusRings[state.radiusRings.length-1].radiusKm;
+  const radii = state.radiusRings.map(r=>r.radiusKm).sort((a,b)=>a-b);
+
+  // 벡터 소스에서 POI 피처 가져오기
+  const omtSrc = findOmtSource();
+  if (!omtSrc){ notify('오류','벡터 소스를 찾을 수 없습니다.','err'); return; }
+
+  let allFeatures = [];
+  try {
+    allFeatures = map.querySourceFeatures(omtSrc, { sourceLayer:'poi' });
+  } catch(e){
+    console.warn('querySourceFeatures 실패, queryRenderedFeatures 로 대체:', e);
+    allFeatures = map.queryRenderedFeatures({ layers: Object.values(OVL).filter(id=>map.getLayer(id)) });
+  }
+
+  // 분석 결과 객체
+  const result = {};
+  ANALYSIS_CATEGORIES.forEach(cat=>{
+    result[cat.key] = {
+      label: cat.label,
+      byRadius: {},          // { '500m': [{name, dist},...], '1km': [...] }
+      nearest: null,         // { name, distM }
+      total: 0
+    };
+    radii.forEach(km=>{ result[cat.key].byRadius[fmtRadius(km)] = []; });
+  });
+
+  // 중복 방지용 Set
+  const seen = new Set();
+
+  allFeatures.forEach(feat=>{
+    const props = feat.properties || {};
+    const subclass = props.subclass || '';
+    const name = props['name:ko'] || props.name || '';
+    const geom = feat.geometry;
+    if (!geom || !geom.coordinates) return;
+
+    // 어떤 카테고리에 속하는지 확인
+    const cat = ANALYSIS_CATEGORIES.find(c=> c.subclasses.includes(subclass));
+    if (!cat) return;
+
+    // 좌표 추출 (Point만)
+    let coords;
+    if (geom.type === 'Point') coords = geom.coordinates;
+    else return;
+
+    // 중복 방지 (같은 좌표+이름)
+    const dedupKey = cat.key + '_' + coords[0].toFixed(5) + '_' + coords[1].toFixed(5);
+    if (seen.has(dedupKey)) return;
+    seen.add(dedupKey);
+
+    // 중심점에서 거리 계산 (km)
+    const distKm = turf.distance(center, coords, { units:'kilometers' });
+    if (distKm > maxKm * 1.1) return; // 최대 반경 바깥은 무시
+
+    const distM = Math.round(distKm * 1000);
+    const walkMin = Math.round(distM / 80); // 도보 80m/분 기준
+
+    const item = { name: name || '이름 없음', distM, walkMin, distKm };
+
+    // 반경 구간별 분류
+    for (const km of radii){
+      if (distKm <= km){
+        result[cat.key].byRadius[fmtRadius(km)].push(item);
+        break;
+      }
+    }
+
+    result[cat.key].total++;
+
+    // 가장 가까운 시설 갱신
+    if (!result[cat.key].nearest || distM < result[cat.key].nearest.distM){
+      result[cat.key].nearest = item;
+    }
+  });
+
+  // 결과 저장 (AI 분석에서 사용)
+  state.lastAnalysis = { center, radii, result, maxKm };
+
+  // UI 표시
+  renderAnalysisResult(result, radii);
+  $('#analysisModalBack').classList.add('show');
+  notify('분석 완료', '입지 분석 결과를 확인하세요.', 'ok');
+}
+
+/* 분석 결과 렌더링 */
+function renderAnalysisResult(result, radii){
+  const body = $('#analysisBody');
+  const centerText = state.center ? `${state.center.lat.toFixed(5)}, ${state.center.lng.toFixed(5)}` : '';
+
+  let html = `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:14px;font-weight:700;color:var(--ink);margin-bottom:4px;">📍 분석 중심점: ${centerText}</div>
+      <div style="font-size:12px;color:var(--ink-soft);">분석 반경: ${radii.map(km=>fmtRadius(km)).join(' · ')}</div>
+    </div>
+
+    <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:8px;">반경별 시설 수</div>
+    <table class="info-table" style="margin-bottom:20px;font-size:12px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--line);">
+          <td style="font-weight:700;color:var(--ink);padding:8px 0;">구분</td>
+          ${radii.map(km=>`<td style="font-weight:700;color:var(--ink);text-align:center;padding:8px 4px;">${fmtRadius(km)}</td>`).join('')}
+          <td style="font-weight:700;color:var(--ink);text-align:center;padding:8px 4px;">합계</td>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  ANALYSIS_CATEGORIES.forEach(cat=>{
+    const r = result[cat.key];
+    html += `<tr>
+      <td style="padding:6px 0;">${cat.label}</td>
+      ${radii.map(km=>{
+        const count = r.byRadius[fmtRadius(km)].length;
+        return `<td style="text-align:center;font-weight:600;padding:6px 4px;">${count}</td>`;
+      }).join('')}
+      <td style="text-align:center;font-weight:700;color:var(--accent);padding:6px 4px;">${r.total}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table>`;
+
+  // 가장 가까운 시설
+  html += `<div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:8px;">가장 가까운 시설</div>
+    <table class="info-table" style="margin-bottom:20px;font-size:12px;">`;
+
+  ANALYSIS_CATEGORIES.forEach(cat=>{
+    const r = result[cat.key];
+    if (r.nearest){
+      html += `<tr>
+        <td style="padding:5px 0;width:30%;">${cat.label}</td>
+        <td style="font-weight:600;">${escapeHtml(r.nearest.name)}</td>
+        <td style="text-align:right;white-space:nowrap;">${r.nearest.distM}m (도보 ${r.nearest.walkMin}분)</td>
+      </tr>`;
+    } else {
+      html += `<tr><td style="padding:5px 0;">${cat.label}</td><td colspan="2" style="color:var(--ink-faint);">범위 내 없음</td></tr>`;
+    }
+  });
+
+  html += `</table>`;
+
+  // AI 분석 결과 영역 (처음에는 비어있음)
+  html += `<div id="aiAnalysisArea"></div>`;
+
+  body.innerHTML = html;
+}
+
+/* 분석 결과를 텍스트로 변환 (복사용) */
+function analysisToText(){
+  if (!state.lastAnalysis) return '';
+  const { result, radii } = state.lastAnalysis;
+  let text = '【입지 분석 결과】\n\n';
+  text += `분석 중심: ${state.center.lat.toFixed(5)}, ${state.center.lng.toFixed(5)}\n`;
+  text += `분석 반경: ${radii.map(km=>fmtRadius(km)).join(' · ')}\n\n`;
+
+  text += '[ 반경별 시설 수 ]\n';
+  text += '구분\t' + radii.map(km=>fmtRadius(km)).join('\t') + '\t합계\n';
+  ANALYSIS_CATEGORIES.forEach(cat=>{
+    const r = result[cat.key];
+    text += cat.label + '\t';
+    text += radii.map(km=> r.byRadius[fmtRadius(km)].length).join('\t');
+    text += '\t' + r.total + '\n';
+  });
+
+  text += '\n[ 가장 가까운 시설 ]\n';
+  ANALYSIS_CATEGORIES.forEach(cat=>{
+    const r = result[cat.key];
+    if (r.nearest){
+      text += `${cat.label}: ${r.nearest.name} (${r.nearest.distM}m, 도보 ${r.nearest.walkMin}분)\n`;
+    }
+  });
+  return text;
+}
+
+/* AI 입지 분석 — Claude.ai에서 바로 분석하기 */
+async function runAiAnalysis(){
+  if (!state.lastAnalysis){
+    notify('분석 먼저','입지 분석을 먼저 실행하세요.','warn'); return;
+  }
+
+  const dataText = analysisToText();
+  const { result } = state.lastAnalysis;
+
+  const prompt = `당신은 인테리어·건축 회사의 입지 분석 전문가입니다.
+아래 데이터를 바탕으로 이 대지의 입지 장점을 분석하는 전문적인 문장을 한국어로 작성해주세요.
+
+[분석 데이터]
+${dataText}
+
+[작성 규칙]
+1. 제안서에 바로 넣을 수 있는 전문적인 톤으로 작성
+2. 교통 접근성, 생활 편의시설, 교육 인프라, 상업시설 순서로 분석
+3. 구체적인 시설명과 거리(m), 도보 시간을 포함
+4. 각 항목은 2~3문장으로 간결하게
+5. 마지막에 종합 평가 1문단 추가
+6. 범위 내에 없는 항목은 언급하지 않기`;
+
+  // 클립보드에 프롬프트 복사
+  try {
+    await navigator.clipboard.writeText(prompt);
+  } catch(e){
+    // 클립보드 실패 시 수동 복사 안내
+    const area = $('#aiAnalysisArea');
+    area.innerHTML = `
+      <div style="border-top:1px solid var(--line);padding-top:16px;margin-top:8px;">
+        <div style="font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px;">📋 아래 내용을 전체 선택(Ctrl+A) 후 복사해주세요</div>
+        <textarea style="width:100%;height:200px;font-size:11px;padding:10px;border:1px solid var(--line);border-radius:7px;">${escapeHtml(prompt)}</textarea>
+      </div>`;
+    return;
+  }
+
+  // Claude.ai 새 탭으로 열기
+  window.open('https://claude.ai/new', '_blank');
+
+  // 안내 표시
+  const area = $('#aiAnalysisArea');
+  area.innerHTML = `
+    <div style="border-top:1px solid var(--line);padding-top:16px;margin-top:8px;">
+      <div style="background:var(--accent-soft);border:1px solid #bfdbfe;border-radius:9px;padding:16px;">
+        <div style="font-size:14px;font-weight:700;color:var(--accent);margin-bottom:8px;">✅ 프롬프트가 클립보드에 복사되었습니다!</div>
+        <div style="font-size:13px;color:var(--ink);line-height:1.7;">
+          <b>1.</b> 방금 열린 Claude.ai 탭에서 <b>Ctrl+V</b> (붙여넣기)<br>
+          <b>2.</b> Enter 누르면 AI가 입지 분석 문장을 작성합니다<br>
+          <b>3.</b> 생성된 문장을 복사해서 제안서에 바로 넣으세요
+        </div>
+      </div>
+      <button class="btn sm" id="btnRecopyPrompt" style="margin-top:8px;width:auto;padding:6px 14px;">📋 프롬프트 다시 복사</button>
+    </div>`;
+  $('#btnRecopyPrompt').addEventListener('click', ()=>{
+    navigator.clipboard.writeText(prompt).then(()=> notify('복사 완료','프롬프트가 다시 복사되었습니다.','ok'));
+  });
+
+  notify('Claude.ai로 이동', '붙여넣기(Ctrl+V) 후 Enter를 누르세요!', 'ok');
+}
+
+/* ===========================================================================
+   [13] UI 이벤트 연결 (버튼·입력 등)
+   =========================================================================== */
+function bindUI(){
+
+  // --- 접기/펼치기 (모든 패널 섹션) ---
+  $$('.panel-section .sec-head').forEach(head=>{
+    head.addEventListener('click', ()=> head.parentElement.classList.toggle('collapsed'));
+  });
+
+  // --- 클릭 모드 툴바 ---
+  $$('.map-tools .tool').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      $$('.map-tools .tool').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      state.clickMode = btn.dataset.mode;
+      const hint = { move:'지도를 드래그해 이동하세요',
+                     marker:'지도를 클릭하면 마커가 추가됩니다',
+                     center:'지도를 클릭하면 반경 중심점이 지정됩니다' };
+      $('#mapHint').textContent = hint[state.clickMode];
+    });
+  });
+
+  // --- 좌표로 마커 추가 ---
+  $('#btnAddByCoord').addEventListener('click', ()=>{
+    const lng = parseFloat($('#addLng').value), lat = parseFloat($('#addLat').value);
+    if (isNaN(lng) || isNaN(lat)){ notify('입력 오류','경도와 위도를 모두 숫자로 입력하세요.','warn'); return; }
+    addMarker(lng, lat);
+    state.map.flyTo({ center:[lng,lat], zoom:Math.max(state.map.getZoom(),13) });
+  });
+
+  // --- 주소 검색 (MapTiler Geocoding API) ---
+  // 입력할 때마다 0.35초 대기(디바운스) 후 API 호출하여 자동완성 표시
+  let geoTimer = null;
+  const geoInput = $('#geoInput');
+  const geoResults = $('#geoResults');
+  const geoClear = $('#geoClear');
+
+  geoInput.addEventListener('input', ()=>{
+    const q = geoInput.value.trim();
+    // X(지우기) 버튼 표시/숨김
+    geoClear.classList.toggle('show', q.length > 0);
+    // 글자가 2자 미만이면 드롭다운 닫기
+    if (q.length < 2){
+      geoResults.classList.remove('show');
+      return;
+    }
+    // 0.35초 뒤에 API 호출 (타이핑 중간에는 호출 안 함)
+    clearTimeout(geoTimer);
+    geoTimer = setTimeout(()=> geocodeSearch(q), 350);
+  });
+
+  // 엔터 키 → 바로 검색
+  geoInput.addEventListener('keydown', (e)=>{
+    if (e.key === 'Enter'){
+      e.preventDefault();
+      clearTimeout(geoTimer);
+      const q = geoInput.value.trim();
+      if (q.length >= 2) geocodeSearch(q);
+    }
+  });
+
+  // X 버튼 → 검색어 지우기
+  geoClear.addEventListener('click', ()=>{
+    geoInput.value = '';
+    geoClear.classList.remove('show');
+    geoResults.classList.remove('show');
+    geoInput.focus();
+  });
+
+  // 검색창 바깥 클릭 시 드롭다운 닫기
+  document.addEventListener('click', (e)=>{
+    if (!e.target.closest('.search-wrap')){
+      geoResults.classList.remove('show');
+    }
+  });
+  // 다시 포커스하면 결과가 있으면 드롭다운 열기
+  geoInput.addEventListener('focus', ()=>{
+    if (geoResults.childElementCount > 0 && geoInput.value.trim().length >= 2){
+      geoResults.classList.add('show');
+    }
+  });
+
+  // --- 마커 필터 검색 ---
+  $('#placeSearch').addEventListener('input', renderMarkerList);
+
+  // --- 중심점 버튼들 ---
+  $('#btnCenterMarker').addEventListener('click', ()=> setCenterFromMarker());
+  $('#btnCenterMap').addEventListener('click', setCenterFromMapCenter);
+  $('#btnCenterHere').addEventListener('click', setCenterFromMapCenter);
+
+  // --- 반경 입력값 변경 시 미리보기 갱신 ---
+  ['radiusInterval','radiusUnit','radiusCount'].forEach(id=>{
+    $('#'+id).addEventListener('input', ()=>{ updateRadiusPreview(); updateStatusBar(); });
+  });
+  // 반경 개수 입력 즉시 1~5 보정
+  $('#radiusCount').addEventListener('change', ()=>{
+    let v = parseInt($('#radiusCount').value,10);
+    if (isNaN(v)||v<1) v=1;
+    if (v>5){ v=5; notify('값 보정','반경 개수는 최대 5개입니다.','warn'); }
+    $('#radiusCount').value = v; updateRadiusPreview();
+  });
+
+  // --- 반경 생성/삭제 버튼 ---
+  $('#btnGenRadius').addEventListener('click', generateRadius);
+  $('#btnMakeRadius').addEventListener('click', generateRadius);
+  $('#btnClearRadius').addEventListener('click', ()=> clearRadius(false));
+  $('#btnClearRadius2').addEventListener('click', ()=> clearRadius(false));
+  $('#btnDelLastRadius').addEventListener('click', deleteLastRadius);
+
+  // --- 반경 스타일 ---
+  $('#radiusLabelToggle').addEventListener('change', e=>{
+    state.radiusStyle.showLabel = e.target.checked; applyRadiusStyle();
+  });
+  $('#rFillColor').addEventListener('input', e=>{
+    state.radiusStyle.fillColor = e.target.value; applyRadiusStyle();
+  });
+  $('#rFillOpacity').addEventListener('input', e=>{
+    state.radiusStyle.fillOpacity = parseFloat(e.target.value);
+    $('#rFillOpacityVal').textContent = e.target.value; applyRadiusStyle();
+  });
+  $('#rLineColor').addEventListener('input', e=>{
+    state.radiusStyle.lineColor = e.target.value; applyRadiusStyle();
+  });
+  $('#rLineWidth').addEventListener('input', e=>{
+    state.radiusStyle.lineWidth = parseFloat(e.target.value);
+    $('#rLineWidthVal').textContent = e.target.value; applyRadiusStyle();
+  });
+  $('#rLineStyle').addEventListener('change', e=>{
+    state.radiusStyle.lineStyle = e.target.value; applyRadiusStyle();
+  });
+  $('#rLabelColor').addEventListener('input', e=>{
+    state.radiusStyle.labelColor = e.target.value; applyRadiusStyle();
+  });
+
+  // --- 오버레이 스타일 (역·버스·병원·학교·판매시설) ---
+  // 점 크기 단계 버튼 (1~5)
+  $$('.size-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      $$('.size-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      OVERLAY_STYLE.dotSize = parseInt(btn.dataset.size, 10);
+      applyDotSize();
+    });
+  });
+
+  $('#tsStationDot').addEventListener('input', e=>{
+    OVERLAY_STYLE.station.dotColor = e.target.value; applyOverlayStyle();
+  });
+  $('#tsStationLbl').addEventListener('input', e=>{
+    OVERLAY_STYLE.station.labelColor = e.target.value; applyOverlayStyle();
+  });
+  $('#tsBusDot').addEventListener('input', e=>{
+    OVERLAY_STYLE.bus.dotColor = e.target.value; applyOverlayStyle();
+  });
+  $('#tsShowLabel').addEventListener('change', e=>{
+    OVERLAY_STYLE.showStationLabel = e.target.checked; applyOverlayStyle();
+  });
+  $('#tsHospDot').addEventListener('input', e=>{
+    OVERLAY_STYLE.hospital.dotColor = e.target.value; applyOverlayStyle();
+  });
+  $('#tsHospLbl').addEventListener('input', e=>{
+    OVERLAY_STYLE.hospital.labelColor = e.target.value; applyOverlayStyle();
+  });
+  $('#tsSchDot').addEventListener('input', e=>{
+    OVERLAY_STYLE.school.dotColor = e.target.value; applyOverlayStyle();
+  });
+  $('#tsSchLbl').addEventListener('input', e=>{
+    OVERLAY_STYLE.school.labelColor = e.target.value; applyOverlayStyle();
+  });
+  $('#tsShopDot').addEventListener('input', e=>{
+    OVERLAY_STYLE.shop.dotColor = e.target.value; applyOverlayStyle();
+  });
+  $('#tsShopLbl').addEventListener('input', e=>{
+    OVERLAY_STYLE.shop.labelColor = e.target.value; applyOverlayStyle();
+  });
+
+  // --- 정보량 프리셋 ---
+  $('#densityPresets').addEventListener('click', e=>{
+    const btn = e.target.closest('.chip'); if(!btn) return;
+    setActiveChip('#densityPresets', btn.dataset.preset);
+    applyDensityPreset(btn.dataset.preset);
+  });
+
+  // --- 색상 프리셋 ---
+  $('#colorPresets').addEventListener('click', e=>{
+    const btn = e.target.closest('.chip'); if(!btn) return;
+    setActiveChip('#colorPresets', btn.dataset.preset);
+    applyColorPreset(btn.dataset.preset);
+  });
+  // --- 색상 선택기 ---
+  $$('input[data-ckey]').forEach(inp=>{
+    inp.addEventListener('input', ()=> applyColorKey(inp.dataset.ckey, inp.value));
+  });
+
+  // --- 스타일 복원 ---
+  $('#btnRestoreStyle').addEventListener('click', restoreOriginalStyle);
+  $('#btnRestoreStyle2').addEventListener('click', restoreOriginalStyle);
+
+  // --- 다운로드 설정 ---
+  $('#dlSize').addEventListener('change', ()=>{
+    $('#customSizeRow').style.display = $('#dlSize').value==='custom' ? 'flex':'none';
+    syncDownloadState();
+  });
+  ['dlW','dlH','dlScope','dlMethod','dlCopyright','dlScale'].forEach(id=>{
+    $('#'+id).addEventListener('change', syncDownloadState);
+  });
+  $('#dlMethod').addEventListener('change', ()=>{
+    const m = $('#dlMethod').value;
+    $('#dlMethodNote').textContent = m==='static'
+      ? 'Static API는 서버에서 고해상도로 렌더링합니다. 유료 플랜이 필요할 수 있고, 반경이 많으면 일부 제외될 수 있습니다.'
+      : '브라우저 캡처 방식은 화면의 지도·반경·마커를 그대로 이미지로 저장합니다. (항상 동작)';
+  });
+  $$('.chip[data-fmt]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      $$('.chip[data-fmt]').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      state.download.format = btn.dataset.fmt;
+    });
+  });
+
+  // --- 다운로드 버튼 / 모달 ---
+  $('#btnOpenDownload').addEventListener('click', openDownloadPreview);
+  $('#btnDownload2').addEventListener('click', openDownloadPreview);
+  $('#btnHeaderDownload').addEventListener('click', openDownloadPreview);
+  $('#modalClose').addEventListener('click', ()=> $('#modalBack').classList.remove('show'));
+  $('#modalBack').addEventListener('click', e=>{
+    if (e.target === $('#modalBack')) $('#modalBack').classList.remove('show');
+  });
+  $('#btnRegenPreview').addEventListener('click', generatePreview);
+  $('#btnConfirmDownload').addEventListener('click', doDownload);
+
+  // --- 지우개 버튼 ---
+  $('#btnEraserMode').addEventListener('click', toggleEraserMode);
+  $('#btnUndoErase').addEventListener('click', undoLastErase);
+  $('#btnUndoAll').addEventListener('click', undoAllErase);
+
+  // --- 입지 분석 ---
+  $('#btnAnalysis').addEventListener('click', runAnalysis);
+  $('#analysisClose').addEventListener('click', ()=> $('#analysisModalBack').classList.remove('show'));
+  $('#btnCloseAnalysis2').addEventListener('click', ()=> $('#analysisModalBack').classList.remove('show'));
+
+  // --- 로드뷰 ---
+  $('#btnRoadviewCenter').addEventListener('click', ()=>{
+    const c = state.map.getCenter();
+    openRoadview(c.lng, c.lat, '지도 중심 위치');
+  });
+  $('#rvClose').addEventListener('click', closeRoadview);
+  $('#roadviewModalBack').addEventListener('click', e=>{
+    if (e.target === $('#roadviewModalBack')) closeRoadview();
+  });
+
+  // --- VWorld 3D ---
+  $('#btn3dMapCenter').addEventListener('click', open3DForMapCenter);
+  $('#btn3dSelectedMarker').addEventListener('click', open3DForSelectedMarker);
+  $('#vw3dClose').addEventListener('click', close3DModal);
+  $('#vw3dCloseFoot').addEventListener('click', close3DModal);
+  $('#vw3dResetCamera').addEventListener('click', reset3DCamera);
+  $('#vw3dGoMarker').addEventListener('click', ()=>{
+    if (!state.selectedMarkerId){
+      notify('마커 선택 필요','마커를 먼저 선택하세요.','warn'); return;
+    }
+    const m = state.markers.find(mk => mk.id === state.selectedMarkerId);
+    if (m) flyTo3D(m.lng, m.lat);
+  });
+  $('#vw3dGoCenter').addEventListener('click', ()=>{
+    const c = state.map.getCenter();
+    flyTo3D(c.lng, c.lat);
+  });
+  $('#vw3dCapture').addEventListener('click', capture3DScreen);
+  // 3D 모달은 배경 클릭으로 안 닫힘 (실수 방지)
+  $('#analysisModalBack').addEventListener('click', e=>{
+    if (e.target === $('#analysisModalBack')) $('#analysisModalBack').classList.remove('show');
+  });
+  $('#btnCopyAnalysis').addEventListener('click', ()=>{
+    const text = analysisToText();
+    if (!text){ notify('분석 먼저','입지 분석을 먼저 실행하세요.','warn'); return; }
+    navigator.clipboard.writeText(text).then(()=> notify('복사 완료','분석 결과가 클립보드에 복사되었습니다.','ok'));
+  });
+  $('#btnAiAnalysis').addEventListener('click', runAiAnalysis);
+
+  // --- 모바일/태블릿 패널 토글 ---
+  $('#btnToggleLeft').addEventListener('click', ()=>{
+    $('#panelLeft').classList.toggle('open');
+    $('#panelRight').classList.remove('open');
+  });
+  $('#btnToggleRight').addEventListener('click', ()=>{
+    $('#panelRight').classList.toggle('open');
+    $('#panelLeft').classList.remove('open');
+  });
+
+  updateRadiusPreview();
+  syncDownloadState();   // '실제 저장 크기' 안내문 초기 표시
+}
+
+/* 프리셋 칩 활성 표시 */
+function setActiveChip(groupSel, presetName){
+  $$(groupSel + ' .chip').forEach(c=>{
+    c.classList.toggle('active', c.dataset.preset === presetName);
+  });
+}
+/* 프리셋 이름 → 표시 라벨 */
+function presetLabel(kind, name){
+  const d = { original:'Custom Original', minimal:'Minimal', standard:'Standard',
+              presentation:'Presentation', site:'Site Analysis' };
+  const c = { original:'Custom Original', warm:'Warm Beige', mono:'Monochrome',
+              satellite:'🛰 Satellite', dark:'Dark Presentation', brand:'Brand Neutral',
+              watercolor:'🎨 Watercolor' };
+  return (kind==='density'?d:c)[name] || name;
+}
+
+/* ===========================================================================
+   [14] 프로그램 시작
+   =========================================================================== */
+window.addEventListener('DOMContentLoaded', ()=>{
+  bindUI();        // 버튼/입력 이벤트 먼저 연결
+
+  // ─── 카카오 주소 검색 SDK 동적 로딩 (키가 있을 때만) ───
+  if (KAKAO_JS_KEY && KAKAO_JS_KEY.trim() !== ''){
+    const ks = document.createElement('script');
+    ks.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${KAKAO_JS_KEY}&libraries=services&autoload=false`;
+    ks.onload = ()=>{
+      try {
+        kakao.maps.load(()=>{
+          state.kakaoReady = true;
+          console.log('✔ 카카오 주소 검색 준비 완료');
+        });
+      } catch(e){ console.warn('카카오 SDK 초기화 실패:', e); }
+    };
+    ks.onerror = ()=>{ console.warn('카카오 SDK 로딩 실패 - MapTiler 검색만 사용합니다.'); };
+    document.head.appendChild(ks);
+  }
+
+  // 라이브러리(MapTiler SDK + Turf)가 도착했는지 확인.
+  // 인터넷이 느리면 늦게 도착할 수 있으므로 최대 10초까지 0.3초 간격으로 재시도합니다.
+  let tries = 0;
+  const maxTries = 33;            // 0.3초 × 33 ≒ 10초
+  const waiter = setInterval(()=>{
+    tries++;
+    const sdkReady  = (typeof maptilersdk !== 'undefined');
+    const turfReady = (typeof turf !== 'undefined');
+
+    if (sdkReady && turfReady){
+      clearInterval(waiter);
+      initMap();                  // 두 라이브러리 모두 준비됨 → 지도 시작
+      return;
+    }
+    if (tries >= maxTries){
+      clearInterval(waiter);
+      setLoadBadge('is-err','라이브러리 로딩 실패');
+      const miss = [];
+      if (!sdkReady)  miss.push('MapTiler SDK');
+      if (!turfReady) miss.push('Turf.js');
+      showOverlay(`
+        <div class="ov-icon">📡</div>
+        <h3>지도 라이브러리를 불러오지 못했습니다</h3>
+        <p>다음 라이브러리가 로드되지 않았습니다: <b>${miss.join(', ')}</b></p>
+        <p>아래를 확인한 뒤 페이지를 새로고침(F5)하세요.</p>
+        <ul>
+          <li>인터넷에 연결되어 있는지</li>
+          <li>회사 보안 프로그램이나 광고 차단기가 외부 스크립트를 막고 있지 않은지</li>
+          <li>잠시 후 다시 시도 (CDN 일시적 지연일 수 있음)</li>
+        </ul>
+      `);
+    }
+  }, 300);
+});
+</script>
+</body>
+</html>
