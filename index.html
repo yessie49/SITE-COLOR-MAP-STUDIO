@@ -69,12 +69,13 @@ input,select{font-family:inherit;}
   background:var(--panel); border-bottom:1px solid var(--line);
   display:flex; align-items:center; gap:14px; padding:0 18px; z-index:30;
 }
+/* 브랜드 로고 이미지 */
 .brand-logo{
   height:36px;
   width:auto;
-  max-width:260px;
   display:block;
   object-fit:contain;
+  flex:0 0 auto;
 }
 .app-header .spacer{flex:1;}
 /* 지도/스타일 로딩 상태 표시 배지 */
@@ -506,7 +507,7 @@ input[type=range]{width:100%;accent-color:var(--accent);}
      상단 헤더
      ========================================================================= -->
 <header class="app-header">
-  <img src="logo.png" alt="SITE COLOR MAP STUDIO" class="brand-logo" />
+  <img src="logo%20(no%20text).png" alt="SITE COLOR MAP STUDIO" class="brand-logo" />
   <div class="spacer"></div>
   <!-- 지도 로딩 상태 배지 -->
   <div class="status-badge is-loading" id="loadBadge">
