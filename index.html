@@ -21,7 +21,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>입지 분석 지도 메이커 · Site Map Studio</title>
+<title>SITE COLOR MAP STUDIO</title>
 
 <!-- ▼ MapTiler SDK (지도 라이브러리) CSS - 공식 CDN 사용 -->
 <link href="https://cdn.maptiler.com/maptiler-sdk-js/v3.9.0/maptiler-sdk.css" rel="stylesheet" />
@@ -69,14 +69,13 @@ input,select{font-family:inherit;}
   background:var(--panel); border-bottom:1px solid var(--line);
   display:flex; align-items:center; gap:14px; padding:0 18px; z-index:30;
 }
-.app-header .logo{
-  width:30px;height:30px;border-radius:8px;
-  background:linear-gradient(135deg,#2563eb,#1e40af);
-  display:flex;align-items:center;justify-content:center;color:#fff;
-  font-weight:800;font-size:15px;letter-spacing:-.5px;
+.brand-logo{
+  height:36px;
+  width:auto;
+  max-width:260px;
+  display:block;
+  object-fit:contain;
 }
-.app-header h1{font-size:15px;font-weight:700;letter-spacing:-.3px;}
-.app-header h1 small{font-size:11px;color:var(--ink-faint);font-weight:500;margin-left:6px;}
 .app-header .spacer{flex:1;}
 /* 지도/스타일 로딩 상태 표시 배지 */
 .status-badge{
@@ -497,7 +496,6 @@ input[type=range]{width:100%;accent-color:var(--accent);}
     transform:translateY(100%);transition:transform .24s;z-index:25;
   }
   .panel-left.open,.panel-right.open{transform:translateY(0);}
-  .app-header h1 small{display:none;}
   .statusbar{font-size:9.5px;}
 }
 </style>
@@ -508,8 +506,7 @@ input[type=range]{width:100%;accent-color:var(--accent);}
      상단 헤더
      ========================================================================= -->
 <header class="app-header">
-  <div class="logo">M</div>
-  <h1>입지 분석 지도 메이커<small>Site Map Studio</small></h1>
+  <img src="logo.png" alt="SITE COLOR MAP STUDIO" class="brand-logo" />
   <div class="spacer"></div>
   <!-- 지도 로딩 상태 배지 -->
   <div class="status-badge is-loading" id="loadBadge">
