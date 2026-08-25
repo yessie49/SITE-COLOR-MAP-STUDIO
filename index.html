@@ -69,12 +69,13 @@ input,select{font-family:inherit;}
   background:var(--panel); border-bottom:1px solid var(--line);
   display:flex; align-items:center; gap:14px; padding:0 18px; z-index:30;
 }
+/* 브랜드 로고 이미지 */
 .brand-logo{
-  height:64px;
+  height:36px;
   width:auto;
-  max-width:260px;
   display:block;
   object-fit:contain;
+  flex:0 0 auto;
 }
 .app-header .spacer{flex:1;}
 /* 지도/스타일 로딩 상태 표시 배지 */
@@ -241,6 +242,17 @@ input[type=range]{width:100%;accent-color:var(--accent);}
 .marker-item .pin-dot{width:11px;height:11px;border-radius:50%;flex:0 0 11px;}
 .marker-item .m-name{flex:1;font-size:12px;font-weight:600;}
 .marker-item .m-cat{font-size:10px;color:var(--ink-faint);}
+
+
+/* 마커 간 직선거리 표시 */
+.distance-result{
+  font-size:11.5px;color:var(--ink-soft);background:var(--accent-soft);
+  border:1px solid #bfdbfe;border-radius:8px;padding:10px 11px;line-height:1.55;
+}
+.distance-result .distance-main{
+  display:block;color:var(--accent);font-size:16px;font-weight:800;margin:2px 0 4px;
+}
+.distance-result .distance-sub{color:var(--ink-soft);font-size:11px;}
 
 /* 분석 정보 표 */
 .info-table{width:100%;border-collapse:collapse;font-size:11.5px;}
@@ -506,7 +518,7 @@ input[type=range]{width:100%;accent-color:var(--accent);}
      상단 헤더
      ========================================================================= -->
 <header class="app-header">
-  <img src="logo.png" alt="SITE COLOR MAP STUDIO" class="brand-logo" />
+  <img src="logo%20(no%20text).png" alt="SITE COLOR MAP STUDIO" class="brand-logo" />
   <div class="spacer"></div>
   <!-- 지도 로딩 상태 배지 -->
   <div class="status-badge is-loading" id="loadBadge">
@@ -575,6 +587,30 @@ input[type=range]{width:100%;accent-color:var(--accent);}
       </div>
     </div>
 
+
+    <!-- 2-2) 마커 간 직선거리 측정 -->
+    <div class="panel-section">
+      <div class="sec-head"><span class="sec-icon">📏</span><h2>마커 간 거리</h2><span class="chev">▾</span></div>
+      <div class="sec-body">
+        <div class="field">
+          <label>시작 마커</label>
+          <select id="distFrom"><option value="">마커 선택</option></select>
+        </div>
+        <div class="field">
+          <label>도착 마커</label>
+          <select id="distTo"><option value="">마커 선택</option></select>
+        </div>
+        <div class="btn-grid" style="margin-bottom:8px;">
+          <button class="btn primary sm" id="btnMeasureDistance">📏 거리 계산</button>
+          <button class="btn danger sm" id="btnClearDistance">거리 삭제</button>
+        </div>
+        <div class="distance-result" id="distanceResult">
+          마커 2개를 선택한 뒤 거리 계산을 누르세요.<br>
+          지도 위에 직선과 거리 라벨이 표시됩니다.
+        </div>
+      </div>
+    </div>
+
     <!-- 3) 분석 정보 요약 -->
     <div class="panel-section">
       <div class="sec-head"><span class="sec-icon">📊</span><h2>분석 정보</h2><span class="chev">▾</span></div>
@@ -583,6 +619,7 @@ input[type=range]{width:100%;accent-color:var(--accent);}
           <tr><td>반경 간격</td><td id="iv-interval">-</td></tr>
           <tr><td>반경 개수</td><td id="iv-count">-</td></tr>
           <tr><td>중심 좌표</td><td id="iv-center">미지정</td></tr>
+          <tr><td>직선거리</td><td id="iv-distance">-</td></tr>
           <tr><td>현재 줌</td><td id="iv-zoom">-</td></tr>
           <tr><td>스타일 ID</td><td id="iv-style">-</td></tr>
           <tr><td>다운로드 범위</td><td id="iv-scope">-</td></tr>
@@ -631,6 +668,7 @@ input[type=range]{width:100%;accent-color:var(--accent);}
       <div class="st-item"><span class="st-k">중심</span><span class="st-v" id="sb-center">-</span></div>
       <div class="st-item"><span class="st-k">줌</span><span class="st-v" id="sb-zoom">-</span></div>
       <div class="st-item"><span class="st-k">선택마커</span><span class="st-v" id="sb-marker">-</span></div>
+      <div class="st-item"><span class="st-k">직선거리</span><span class="st-v" id="sb-distance">-</span></div>
       <div class="st-item"><span class="st-k">반경개수</span><span class="st-v" id="sb-rcount">0</span></div>
       <div class="st-item"><span class="st-k">반경간격</span><span class="st-v" id="sb-rinterval">-</span></div>
       <div class="st-item"><span class="st-k">정보량</span><span class="st-v" id="sb-density">Custom Original</span></div>
@@ -1064,6 +1102,11 @@ const state = {
   center: null,              // 반경 중심점 {lng,lat}
   centerMarkerObj: null,     // 지도 위 중심점 표시 마커
   radiusRings: [],           // 생성된 반경 원들 [{id,radiusKm,...레이어id}]
+  distanceMeasure: {          // 마커 2개 사이 직선거리 측정 상태
+    fromId:null, toId:null, km:null,
+    lineSrc:'distance_line_src', labelSrc:'distance_label_src',
+    lineLy:'distance_line_layer', labelLy:'distance_label_layer'
+  },
   radiusStyle: {             // 반경 스타일 값
     fillColor:'#3b82f6', fillOpacity:0.08,
     lineColor:'#2563eb', lineWidth:2, lineStyle:'solid',
@@ -1844,7 +1887,7 @@ function applyColorPreset(name){
     state.map.setStyle(CUSTOM_STYLE_URL);
     state.map.once('styledata', ()=>{
       setTimeout(()=>{
-        onStyleReady(); redrawAllRadius();
+        onStyleReady(); redrawAllRadius(); redrawDistanceLine();
         // 색상 프리셋 적용
         const c = COLOR_PRESETS[name];
         if (c){
@@ -1884,7 +1927,7 @@ function switchToSatellite(){
   map.once('styledata', ()=>{
     setTimeout(()=>{
       onStyleReady();
-      redrawAllRadius();
+      redrawAllRadius(); redrawDistanceLine();
       setLoadBadge('is-ok','위성 지도 준비 완료');
       notify('🛰 Satellite Hybrid', '위성 사진 지도로 전환했습니다. 도로명·지명이 함께 표시됩니다.', 'ok');
     }, 300);
@@ -1908,7 +1951,7 @@ function restoreOriginalStyle(){
     // 약간의 지연 후 레이어 재분류 + 반경 다시 그리기
     setTimeout(()=>{
       onStyleReady();
-      redrawAllRadius();
+      redrawAllRadius(); redrawDistanceLine();
       setLoadBadge('is-ok', '지도 준비 완료');
       // 색상/정보량 프리셋 표시를 Original로 되돌림
       state.colorPreset = 'original'; state.densityPreset = 'original';
@@ -1988,6 +2031,7 @@ function deleteMarker(id){
   if (i<0) return;
   state.markers[i].obj.remove();
   state.markers.splice(i,1);
+  if (state.distanceMeasure.fromId === id || state.distanceMeasure.toId === id) clearDistance(true, true);
   if (state.selectedMarkerId === id) state.selectedMarkerId = null;
   renderPlaceCard();
   renderMarkerList();
@@ -2058,9 +2102,10 @@ function renderMarkerList(){
     (m.name+m.address+m.category).toLowerCase().includes(q));
   if (!state.markers.length){
     box.innerHTML = `<div class="note">아직 추가된 마커가 없습니다.</div>`;
+    updateDistanceOptions();
     return;
   }
-  if (!list.length){ box.innerHTML = `<div class="note">검색 결과가 없습니다.</div>`; return; }
+  if (!list.length){ box.innerHTML = `<div class="note">검색 결과가 없습니다.</div>`; updateDistanceOptions(); return; }
   box.innerHTML = '';
   list.forEach(m=>{
     const el = document.createElement('div');
@@ -2072,6 +2117,196 @@ function renderMarkerList(){
     el.addEventListener('click', ()=> selectMarker(m.id));
     box.appendChild(el);
   });
+  updateDistanceOptions();
+}
+
+
+/* ==========================================================================
+   [7a] 마커 간 직선거리 측정
+   --------------------------------------------------------------------------
+   · 마커 2개를 선택하면 Turf.distance 로 지구 곡률을 반영한 직선거리를 계산합니다.
+   · 결과는 지도 위 직선 레이어와 거리 라벨로 표시됩니다.
+   ========================================================================== */
+function fmtDistance(km){
+  if (!isFinite(km)) return '-';
+  if (km < 1) return Math.round(km*1000).toLocaleString('ko-KR') + ' m';
+  if (km < 10) return km.toFixed(2).replace(/\.00$/,'') + ' km';
+  return km.toFixed(1).replace(/\.0$/,'') + ' km';
+}
+function currentDistanceLabel(){
+  return (state.distanceMeasure && typeof state.distanceMeasure.km === 'number')
+    ? fmtDistance(state.distanceMeasure.km) : '-';
+}
+function distanceMarkerPair(){
+  const d = state.distanceMeasure;
+  const a = getMarker(d.fromId);
+  const b = getMarker(d.toId);
+  return { a, b };
+}
+function updateDistanceOptions(){
+  const fromSel = $('#distFrom');
+  const toSel = $('#distTo');
+  if (!fromSel || !toSel) return;
+
+  let fromId = state.distanceMeasure.fromId || fromSel.value || null;
+  let toId   = state.distanceMeasure.toId   || toSel.value   || null;
+
+  if (fromId && !getMarker(fromId)) fromId = null;
+  if (toId && !getMarker(toId)) toId = null;
+
+  if (state.markers.length >= 2){
+    if (!fromId) fromId = state.markers[0].id;
+    if (!toId || toId === fromId){
+      const alt = state.markers.find(m=>m.id !== fromId);
+      toId = alt ? alt.id : null;
+    }
+  } else if (state.markers.length === 1){
+    fromId = state.markers[0].id;
+    toId = null;
+  } else {
+    fromId = null;
+    toId = null;
+  }
+
+  state.distanceMeasure.fromId = fromId;
+  state.distanceMeasure.toId = toId;
+
+  const optionHtml = state.markers.map(m=>
+    `<option value="${m.id}">${escapeHtml(m.name || m.id)}</option>`
+  ).join('');
+
+  fromSel.innerHTML = `<option value="">시작 마커 선택</option>${optionHtml}`;
+  toSel.innerHTML   = `<option value="">도착 마커 선택</option>${optionHtml}`;
+  fromSel.value = fromId || '';
+  toSel.value = toId || '';
+
+  updateDistanceResultBox();
+}
+function setDistanceMarker(which, id){
+  state.distanceMeasure[which] = id || null;
+  if (state.distanceMeasure.fromId && state.distanceMeasure.toId &&
+      state.distanceMeasure.fromId === state.distanceMeasure.toId){
+    const alt = state.markers.find(m=>m.id !== id);
+    if (which === 'fromId') state.distanceMeasure.toId = alt ? alt.id : null;
+    else state.distanceMeasure.fromId = alt ? alt.id : null;
+  }
+  state.distanceMeasure.km = null;
+  removeDistanceLineFromMap(state.map);
+  updateDistanceOptions();
+  updateStatusBar();
+  updateInfoTable();
+}
+function updateDistanceResultBox(){
+  const box = $('#distanceResult');
+  if (!box) return;
+  const { a, b } = distanceMarkerPair();
+  const km = state.distanceMeasure.km;
+
+  if (state.markers.length < 2){
+    box.innerHTML = `마커를 2개 이상 추가하면<br>두 지점 사이의 직선거리를 계산할 수 있습니다.`;
+  } else if (!a || !b){
+    box.innerHTML = `시작 마커와 도착 마커를 선택한 뒤<br><b>거리 계산</b>을 눌러주세요.`;
+  } else if (typeof km === 'number'){
+    box.innerHTML = `
+      <span class="distance-main">${fmtDistance(km)}</span>
+      <span class="distance-sub">${escapeHtml(a.name)} ↔ ${escapeHtml(b.name)}<br>※ 도로 이동거리가 아닌 직선거리입니다.</span>`;
+  } else {
+    box.innerHTML = `${escapeHtml(a.name)} ↔ ${escapeHtml(b.name)}<br><b>거리 계산</b>을 누르면 지도 위에 선이 표시됩니다.`;
+  }
+
+  const sb = $('#sb-distance');
+  if (sb) sb.textContent = currentDistanceLabel();
+  const iv = $('#iv-distance');
+  if (iv) iv.textContent = currentDistanceLabel();
+}
+function measureDistance(){
+  if (!state.styleLoaded){ notify('잠시만요','지도 로딩 후 사용 가능합니다.','warn'); return; }
+  if (state.markers.length < 2){ notify('마커 부족','거리 측정에는 마커가 최소 2개 필요합니다.','warn'); return; }
+
+  state.distanceMeasure.fromId = $('#distFrom').value || state.distanceMeasure.fromId;
+  state.distanceMeasure.toId   = $('#distTo').value   || state.distanceMeasure.toId;
+  const { a, b } = distanceMarkerPair();
+
+  if (!a || !b){ notify('마커 선택 필요','시작 마커와 도착 마커를 모두 선택하세요.','warn'); return; }
+  if (a.id === b.id){ notify('선택 오류','서로 다른 마커 2개를 선택하세요.','warn'); return; }
+
+  const km = turf.distance([a.lng, a.lat], [b.lng, b.lat], { units:'kilometers' });
+  state.distanceMeasure.km = km;
+  drawDistanceLineOnMap(state.map);
+  updateDistanceResultBox();
+  updateStatusBar();
+  updateInfoTable();
+  notify('거리 계산 완료', `${a.name} ↔ ${b.name}: ${fmtDistance(km)}`, 'ok');
+}
+function distanceGeoJSON(){
+  const { a, b } = distanceMarkerPair();
+  const km = state.distanceMeasure.km;
+  if (!a || !b || typeof km !== 'number') return null;
+
+  const line = turf.lineString([[a.lng, a.lat], [b.lng, b.lat]], { label: fmtDistance(km) });
+  const mid = turf.midpoint(turf.point([a.lng, a.lat]), turf.point([b.lng, b.lat]));
+  mid.properties = { label: fmtDistance(km) };
+  return { line, mid };
+}
+function removeDistanceLineFromMap(map){
+  if (!map || !state.distanceMeasure) return;
+  const d = state.distanceMeasure;
+  try{
+    [d.labelLy, d.lineLy].forEach(id=>{ if (map.getLayer(id)) map.removeLayer(id); });
+    [d.labelSrc, d.lineSrc].forEach(id=>{ if (map.getSource(id)) map.removeSource(id); });
+  }catch(e){}
+}
+function drawDistanceLineOnMap(map){
+  if (!map) return;
+  const geo = distanceGeoJSON();
+  if (!geo) return;
+  const d = state.distanceMeasure;
+  removeDistanceLineFromMap(map);
+  try{
+    map.addSource(d.lineSrc, { type:'geojson', data: geo.line });
+    map.addSource(d.labelSrc, { type:'geojson', data: geo.mid });
+    map.addLayer({
+      id:d.lineLy, type:'line', source:d.lineSrc,
+      paint:{
+        'line-color':'#111827',
+        'line-width':3,
+        'line-dasharray':[2,1]
+      }
+    });
+    map.addLayer({
+      id:d.labelLy, type:'symbol', source:d.labelSrc,
+      layout:{
+        'text-field':['get','label'],
+        'text-size':13,
+        'text-font':getLabelFont(),
+        'text-offset':[0,-0.9],
+        'text-anchor':'bottom'
+      },
+      paint:{
+        'text-color':'#111827',
+        'text-halo-color':'#ffffff',
+        'text-halo-width':2.5
+      }
+    });
+  }catch(e){ console.warn('거리 선 표시 실패', e); }
+}
+function clearDistance(silent, clearSelection){
+  removeDistanceLineFromMap(state.map);
+  state.distanceMeasure.km = null;
+  if (clearSelection){
+    state.distanceMeasure.fromId = null;
+    state.distanceMeasure.toId = null;
+  }
+  updateDistanceOptions();
+  updateStatusBar();
+  updateInfoTable();
+  if (!silent) notify('거리 삭제', '지도 위 직선거리 표시를 삭제했습니다.', 'ok');
+}
+function redrawDistanceLine(){
+  if (state.distanceMeasure && typeof state.distanceMeasure.km === 'number'){
+    drawDistanceLineOnMap(state.map);
+  }
+  updateDistanceResultBox();
 }
 
 /* HTML 안전 처리 */
@@ -2492,6 +2727,7 @@ function updateStatusBar(){
   $('#sb-rinterval').textContent = iv;
   $('#sb-size').textContent = currentSizeLabel();
   $('#sb-scope').textContent = scopeLabel(state.download.scope);
+  const sbDist = $('#sb-distance'); if (sbDist) sbDist.textContent = currentDistanceLabel();
 }
 function updateInfoTable(){
   $('#iv-interval').textContent = $('#radiusInterval').value + ' ' + $('#radiusUnit').value;
@@ -2499,6 +2735,7 @@ function updateInfoTable(){
   $('#iv-zoom').textContent = state.map ? state.map.getZoom().toFixed(2) : '-';
   $('#iv-scope').textContent = scopeLabel(state.download.scope);
   $('#iv-size').textContent = currentSizeLabel();
+  const ivDist = $('#iv-distance'); if (ivDist) ivDist.textContent = currentDistanceLabel();
 }
 
 /* ===========================================================================
@@ -2536,7 +2773,7 @@ function getFinalSize(){
 }
 function currentSizeLabel(){ const [w,h]=getFinalSize(); return w+'×'+h; }
 function scopeLabel(s){
-  return s==='map'?'지도만': s==='info'?'지도+마커+반경+정보' : '지도+마커+반경';
+  return s==='map'?'지도만': s==='info'?'지도+마커+반경+거리+정보' : '지도+마커+반경+거리';
 }
 
 /* --- 방식 A : 캔버스 캡처로 고해상도 합성 이미지(canvas) 만들기 ---
@@ -2595,8 +2832,9 @@ async function buildCanvasImage(){
   copyLayerVisibility(srcMap, tmpMap);
   // (5) 현재 색상 커스터마이징을 임시 지도에도 복제
   copyPaintColors(srcMap, tmpMap);
-  // (6) 반경 원을 임시 지도에 다시 그림
+  // (6) 반경 원과 직선거리 선을 임시 지도에 다시 그림
   drawRadiusOnMap(tmpMap);
+  if (state.download.scope !== 'map') drawDistanceLineOnMap(tmpMap);
   // (6b) 다운로드 체크박스에 따라 점 정보 오버레이를 임시 지도에 추가
   drawOverlaysOnMap(tmpMap);
 
@@ -2853,6 +3091,10 @@ function drawInfoCard(ctx, dpr){
     const list = state.radiusRings.map(r=>fmtRadius(r.radiusKm)).join(' / ');
     lines.push(['반경', list]);
   }
+  if (typeof state.distanceMeasure.km === 'number'){
+    const { a, b } = distanceMarkerPair();
+    if (a && b) lines.push(['직선거리', `${fmtDistance(state.distanceMeasure.km)} (${a.name} ↔ ${b.name})`]);
+  }
   if (!lines.length) return;
 
   const pad=14*dpr, lh=22*dpr, x=18*dpr, y=18*dpr;
@@ -2914,6 +3156,15 @@ function buildStaticUrl(){
       .join('|');
     url += `&markers=${mk}`;
   }
+  // 직선거리 path 추가 (라벨까지 저장하려면 브라우저 캡처 방식 권장)
+  if (state.download.scope !== 'map' && typeof state.distanceMeasure.km === 'number'){
+    const { a, b } = distanceMarkerPair();
+    if (a && b){
+      const extra = `&path=stroke:%23111827|width:3|${a.lng.toFixed(5)},${a.lat.toFixed(5)}|${b.lng.toFixed(5)},${b.lat.toFixed(5)}`;
+      if ((url+extra).length < 7500) url += extra;
+    }
+  }
+
   // 반경 외곽선 path 추가 (점 수를 줄여 URL 길이 관리)
   // 참고: Static API의 path는 실선만 지원합니다. 점선 외곽선을 그대로 저장하려면
   //       다운로드 방식을 '브라우저 캡처'로 두세요(화면을 그대로 찍어 점선이 유지됨).
@@ -3068,6 +3319,7 @@ async function buildCanvasWithSeparateOverlays(){
   copyLayerVisibility(srcMap, tmpMap);
   copyPaintColors(srcMap, tmpMap);
   drawRadiusOnMap(tmpMap);
+  if (state.download.scope !== 'map') drawDistanceLineOnMap(tmpMap);
   // ※ drawOverlaysOnMap은 호출하지 않음 — 오버레이 점은 수동으로 그릴 예정
 
   await new Promise(res=>{ tmpMap.once('idle', res); setTimeout(res, 3000); });
@@ -4187,6 +4439,13 @@ function bindUI(){
 
   // --- 마커 필터 검색 ---
   $('#placeSearch').addEventListener('input', renderMarkerList);
+
+  // --- 마커 간 직선거리 측정 ---
+  $('#distFrom').addEventListener('change', e=> setDistanceMarker('fromId', e.target.value));
+  $('#distTo').addEventListener('change', e=> setDistanceMarker('toId', e.target.value));
+  $('#btnMeasureDistance').addEventListener('click', measureDistance);
+  $('#btnClearDistance').addEventListener('click', ()=> clearDistance(false, false));
+  updateDistanceOptions();
 
   // --- 중심점 버튼들 ---
   $('#btnCenterMarker').addEventListener('click', ()=> setCenterFromMarker());
