@@ -65,17 +65,26 @@ input,select{font-family:inherit;}
    [상단 헤더]
    ========================================================================= */
 .app-header{
-  height:54px; flex:0 0 54px;
+  height:64px; flex:0 0 64px;
   background:var(--panel); border-bottom:1px solid var(--line);
   display:flex; align-items:center; gap:14px; padding:0 18px; z-index:30;
 }
 /* 브랜드 로고 이미지 */
+.brand-logo-link{
+  height:54px;
+  width:220px;
+  display:flex;
+  align-items:center;
+  overflow:hidden;
+  flex:0 0 220px;
+}
 .brand-logo{
-  height:36px;
+  height:54px;
   width:auto;
+  max-width:none;
   display:block;
   object-fit:contain;
-  flex:0 0 auto;
+  object-position:left center;
 }
 .app-header .spacer{flex:1;}
 /* 지도/스타일 로딩 상태 표시 배지 */
@@ -518,7 +527,9 @@ input[type=range]{width:100%;accent-color:var(--accent);}
      상단 헤더
      ========================================================================= -->
 <header class="app-header">
-  <img src="logo%20(no%20text).png" alt="SITE COLOR MAP STUDIO" class="brand-logo" />
+  <a class="brand-logo-link" href="./" aria-label="SITE COLOR MAP STUDIO 홈">
+    <img src="logo%20(no%20text).png" onerror="this.onerror=null;this.src='logo.png';" alt="SITE COLOR MAP STUDIO" class="brand-logo" />
+  </a>
   <div class="spacer"></div>
   <!-- 지도 로딩 상태 배지 -->
   <div class="status-badge is-loading" id="loadBadge">
@@ -4731,3 +4742,4 @@ window.addEventListener('DOMContentLoaded', ()=>{
 </script>
 </body>
 </html>
+
